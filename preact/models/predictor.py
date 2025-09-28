@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Tuple
 
 import pandas as pd
+from sklearn.base import ClassifierMixin
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import brier_score_loss, precision_score, recall_score
@@ -29,30 +30,39 @@ class PredictiveEngine:
     def __init__(self, configs: Iterable[ModelConfig]) -> None:
         self.configs = list(configs)
 
-    def _prepare_dataset(
+    def prepare_dataset(
         self, features: Mapping[str, pd.DataFrame], target: pd.Series
     ) -> Tuple[pd.DataFrame, pd.Series]:
         feature_frames = []
-        for feature_name in self.configs[0].features:
+        feature_names = sorted({name for config in self.configs for name in config.features})
+        for feature_name in feature_names:
             if feature_name not in features:
                 raise KeyError(f"Feature {feature_name} missing from feature store")
-            feature_frames.append(features[feature_name])
-        dataset = pd.concat(feature_frames, axis=1).fillna(method="ffill").fillna(0)
+            frame = features[feature_name].copy()
+            frame.columns = [f"{feature_name}__{col}" for col in frame.columns]
+            feature_frames.append(frame)
+        dataset = pd.concat(feature_frames, axis=1)
+        dataset = dataset.ffill().fillna(0)
         aligned_target = target.reindex(dataset.index).fillna(0)
         return dataset, aligned_target
 
     def _calibrate(
         self, model: GradientBoostingClassifier, X: pd.DataFrame, y: pd.Series
-    ) -> CalibratedClassifierCV:
+    ) -> ClassifierMixin:
+        class_counts = y.value_counts()
+        min_count = int(class_counts.min()) if not class_counts.empty else 0
+        if min_count < 3:
+            model.fit(X, y)
+            return model
         calibrator = CalibratedClassifierCV(model, cv=3, method="isotonic")
         calibrator.fit(X, y)
         return calibrator
 
     def train(
         self, features: Mapping[str, pd.DataFrame], target: pd.Series
-    ) -> Dict[str, CalibratedClassifierCV]:
-        trained: Dict[str, CalibratedClassifierCV] = {}
-        dataset, aligned_target = self._prepare_dataset(features, target)
+    ) -> Dict[str, ClassifierMixin]:
+        trained: Dict[str, ClassifierMixin] = {}
+        dataset, aligned_target = self.prepare_dataset(features, target)
         for config in self.configs:
             base = GradientBoostingClassifier(**config.hyperparameters)
             calibrated = self._calibrate(base, dataset, aligned_target)
@@ -61,11 +71,11 @@ class PredictiveEngine:
 
     def predict(
         self,
-        models: Mapping[str, CalibratedClassifierCV],
+        models: Mapping[str, ClassifierMixin],
         features: Mapping[str, pd.DataFrame],
         target: pd.Series,
     ) -> List[ModelOutput]:
-        dataset, aligned_target = self._prepare_dataset(features, target)
+        dataset, aligned_target = self.prepare_dataset(features, target)
         outputs: List[ModelOutput] = []
         for config in self.configs:
             model = models[config.name]
@@ -98,7 +108,7 @@ def rolling_backtest(
 ) -> Dict[str, List[Dict[str, float]]]:
     """Run a time-series cross validation for robustness checks."""
 
-    dataset, aligned_target = engine._prepare_dataset(features, target)
+    dataset, aligned_target = engine.prepare_dataset(features, target)
     splitter = TimeSeriesSplit(n_splits=n_splits)
     history: Dict[str, List[Dict[str, float]]] = {}
     for config in engine.configs:

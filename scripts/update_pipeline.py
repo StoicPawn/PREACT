@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from preact.config import (
     DataSourceConfig,
@@ -17,6 +22,7 @@ from preact.config import (
 )
 from preact.data_ingestion.sources import build_sources, fetch_all
 from preact.feature_store.builder import build_feature_store
+from preact.models.bayesian import BayesianExplainer
 from preact.models.predictor import PredictiveEngine
 from preact.utils.io import save_config
 
@@ -28,6 +34,12 @@ def default_config(root: Path) -> PREACTConfig:
     data_sources = [
         DataSourceConfig(name="GDELT", endpoint="https://api.gdeltproject.org/api/v2/events"),
         DataSourceConfig(name="ACLED", endpoint="https://api.acleddata.com/acled/read"),
+        DataSourceConfig(name="UNHCR", endpoint="https://api.unhcr.org/population/v1/population"),
+        DataSourceConfig(
+            name="HDX",
+            endpoint="https://data.humdata.org/hxlproxy/data/download",
+            params={"format": "json"},
+        ),
         DataSourceConfig(name="Synthetic_Economic", endpoint="synthetic"),
     ]
     features = [
@@ -49,13 +61,29 @@ def default_config(root: Path) -> PREACTConfig:
             aggregation="mean",
             window_days=14,
         ),
+        FeatureConfig(
+            name="humanitarian_displacement_pressure",
+            inputs=["UNHCR"],
+            aggregation="mean",
+            window_days=14,
+        ),
+        FeatureConfig(
+            name="humanitarian_operational_constraints",
+            inputs=["HDX"],
+            aggregation="mean",
+            window_days=7,
+        ),
     ]
     models = [
         ModelConfig(
             name="coup_risk_gb",
             target="coup",
             horizon_days=30,
-            features=["events__events_coup_attempts", "economic__economic_pressure"],
+            features=[
+                "events__events_coup_attempts",
+                "economic__economic_pressure",
+                "humanitarian__humanitarian_displacement_pressure",
+            ],
             hyperparameters={"n_estimators": 100, "learning_rate": 0.05, "max_depth": 3},
         ),
         ModelConfig(
@@ -65,6 +93,8 @@ def default_config(root: Path) -> PREACTConfig:
             features=[
                 "events__events_violence_against_civilians",
                 "economic__economic_pressure",
+                "humanitarian__humanitarian_displacement_pressure",
+                "humanitarian__humanitarian_operational_constraints",
             ],
             hyperparameters={"n_estimators": 120, "learning_rate": 0.04, "max_depth": 3},
         ),
@@ -97,12 +127,16 @@ def run_pipeline(args: argparse.Namespace) -> None:
     engine = PredictiveEngine(config.models)
     models = engine.train(feature_store.tables, target_series)
     outputs = engine.predict(models, feature_store.tables, target_series)
+    dataset, aligned_target = engine.prepare_dataset(feature_store.tables, target_series)
+    explainer = BayesianExplainer()
+    evidence = explainer.explain(dataset, aligned_target)
 
     predictions_dir = root / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
     for output in outputs:
         df = pd.DataFrame({"probability": output.probabilities})
         df.to_parquet(predictions_dir / f"{output.name}.parquet")
+    evidence.to_json(predictions_dir / "bayesian_evidence.json", orient="records", indent=2)
 
     LOGGER.info("Pipeline completed with %d models", len(outputs))
 

@@ -23,6 +23,16 @@ def load_predictions(path: Path) -> Dict[str, pd.Series]:
     return predictions
 
 
+def load_bayesian_evidence(path: Path) -> pd.DataFrame | None:
+    evidence_file = path / "bayesian_evidence.json"
+    if not evidence_file.exists():
+        return None
+    frame = pd.read_json(evidence_file)
+    if frame.empty:
+        return None
+    return frame
+
+
 def main(prediction_dir: str, outcomes_path: str | None = None) -> None:
     st.sidebar.header("Data Inputs")
     prediction_path = Path(prediction_dir)
@@ -45,6 +55,11 @@ def main(prediction_dir: str, outcomes_path: str | None = None) -> None:
     st.subheader("Latest Alerts")
     ranking = pd.Series(latest).sort_values(ascending=False)
     st.bar_chart(ranking)
+
+    evidence = load_bayesian_evidence(prediction_path)
+    if evidence is not None:
+        st.subheader("Bayesian Evidence Snapshot")
+        st.dataframe(evidence)
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point

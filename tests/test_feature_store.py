@@ -3,7 +3,11 @@ from datetime import datetime
 import pandas as pd
 
 from preact.config import FeatureConfig
-from preact.feature_store.builder import aggregate_events, build_feature_store
+from preact.feature_store.builder import (
+    aggregate_events,
+    aggregate_humanitarian,
+    build_feature_store,
+)
 
 
 def test_aggregate_events_counts_events():
@@ -38,6 +42,13 @@ def test_build_feature_store_combines_tables():
                 "food_price_index": [100],
             }
         ),
+        "UNHCR": pd.DataFrame(
+            {
+                "date": ["2023-01-01", "2023-01-02"],
+                "country": ["A", "A"],
+                "displaced_population": [100, 150],
+            }
+        ),
     }
     features = [
         FeatureConfig(
@@ -52,8 +63,34 @@ def test_build_feature_store_combines_tables():
             aggregation="mean",
             window_days=14,
         ),
+        FeatureConfig(
+            name="humanitarian_displacement",
+            inputs=["UNHCR"],
+            aggregation="mean",
+            window_days=7,
+        ),
     ]
     store = build_feature_store(ingestion, features)
     assert "events__events_protests" in store.tables
     assert "economic__economic_pressure" in store.tables
+    assert "humanitarian__humanitarian_displacement" in store.tables
+
+
+def test_aggregate_humanitarian_timeseries():
+    df = pd.DataFrame(
+        {
+            "date": ["2023-01-01", "2023-01-02"],
+            "country": ["A", "B"],
+            "displaced_population": [100, 150],
+        }
+    )
+    config = FeatureConfig(
+        name="humanitarian_displacement",
+        inputs=["UNHCR"],
+        aggregation="mean",
+        window_days=3,
+    )
+    result = aggregate_humanitarian(df, config)
+    assert result.loc["2023-01-01", "A"] == 100
+    assert result.loc["2023-01-02", "B"] == 150
 
