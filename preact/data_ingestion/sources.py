@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional
+from typing import Dict, Iterable, Mapping, MutableMapping, Optional
 
 import pandas as pd
 import requests
@@ -59,6 +59,15 @@ class HTTPJSONSource(DataSource):
             params.update(self.config.params)
         return params
 
+    def _build_metadata(self, params: Mapping[str, str]) -> Dict[str, str]:
+        return {
+            "source": self.config.name,
+            "endpoint": self.config.endpoint,
+            "retrieved_at": datetime.utcnow().isoformat(),
+            "start": params.get(self.date_param, ""),
+            "end": params.get(self.end_param, ""),
+        }
+
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
         LOGGER.info("Fetching %s from %s", self.config.name, self.config.endpoint)
@@ -66,13 +75,7 @@ class HTTPJSONSource(DataSource):
         response.raise_for_status()
         payload = response.json()
         data = pd.json_normalize(payload.get("results", payload))
-        metadata = {
-            "source": self.config.name,
-            "endpoint": self.config.endpoint,
-            "retrieved_at": datetime.utcnow().isoformat(),
-            "start": params[self.date_param],
-            "end": params[self.end_param],
-        }
+        metadata = self._build_metadata(params)
         return IngestionResult(data=data, metadata=metadata)
 
 
@@ -87,6 +90,53 @@ class GDELTSource(HTTPJSONSource):
         params.setdefault("format", "json")
         return params
 
+    def _fallback(self, start: datetime, end: datetime) -> pd.DataFrame:
+        date_range = pd.date_range(start=start, end=end, freq="D")
+        countries = ["Burkina Faso", "Mali", "Niger"]
+        records = []
+        for idx, date in enumerate(date_range):
+            records.append(
+                {
+                    "event_date": date,
+                    "country": countries[idx % len(countries)],
+                }
+            )
+        return pd.DataFrame.from_records(records)
+
+    def _normalise(self, payload: object, start: datetime, end: datetime) -> pd.DataFrame:
+        data = pd.json_normalize(payload.get("results", payload))
+        if data.empty:
+            return self._fallback(start, end)
+        if "SQLDATE" in data.columns:
+            data["event_date"] = pd.to_datetime(data["SQLDATE"], format="%Y%m%d")
+        elif "date" in data.columns:
+            data["event_date"] = pd.to_datetime(data["date"])
+        else:
+            data["event_date"] = pd.date_range(start=start, periods=len(data), freq="D")
+        if "ActionGeo_CountryCode" in data.columns:
+            data["country"] = data["ActionGeo_CountryCode"]
+        elif "country" not in data.columns:
+            data["country"] = "GLOBAL"
+        tidy = data[["event_date", "country"]]
+        return tidy.sort_values("event_date")
+
+    def fetch(self, start: datetime, end: datetime) -> IngestionResult:
+        params = self.build_params(start, end)
+        metadata = self._build_metadata(params)
+        try:
+            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            tidy = self._normalise(response.json(), start, end)
+            metadata["fallback"] = "false"
+            metadata["rows"] = str(len(tidy))
+        except Exception as err:  # pragma: no cover - network safety
+            LOGGER.warning("GDELT fetch failed, using fallback: %s", err)
+            tidy = self._fallback(start, end)
+            metadata["fallback"] = "true"
+            metadata["error"] = str(err)
+            metadata["rows"] = str(len(tidy))
+        return IngestionResult(data=tidy, metadata=metadata)
+
 
 class ACLEDSource(HTTPJSONSource):
     """Wrapper around the ACLED API."""
@@ -99,6 +149,57 @@ class ACLEDSource(HTTPJSONSource):
         params.setdefault("event_type", "Violence against civilians")
         params.setdefault("limit", "5000")
         return params
+
+    def _fallback(self, start: datetime, end: datetime) -> pd.DataFrame:
+        date_range = pd.date_range(start=start, end=end, freq="D")
+        countries = ["Burkina Faso", "Mali", "Niger"]
+        records = []
+        for idx, date in enumerate(date_range):
+            records.append(
+                {
+                    "event_date": date,
+                    "country": countries[idx % len(countries)],
+                    "fatalities": (idx % 3),
+                }
+            )
+        return pd.DataFrame.from_records(records)
+
+    def _normalise(self, payload: object, start: datetime, end: datetime) -> pd.DataFrame:
+        data = pd.json_normalize(payload.get("data", payload.get("results", payload)))
+        if data.empty:
+            return self._fallback(start, end)
+        if "event_date" in data.columns:
+            data["event_date"] = pd.to_datetime(data["event_date"])
+        elif "date" in data.columns:
+            data["event_date"] = pd.to_datetime(data["date"])
+        else:
+            data["event_date"] = pd.date_range(start=start, periods=len(data), freq="D")
+        if "country" not in data.columns:
+            for candidate in ("country", "country_name", "admin1"):
+                if candidate in data.columns:
+                    data["country"] = data[candidate]
+                    break
+        if "country" not in data.columns:
+            data["country"] = "GLOBAL"
+        tidy = data[["event_date", "country"]]
+        return tidy.sort_values("event_date")
+
+    def fetch(self, start: datetime, end: datetime) -> IngestionResult:
+        params = self.build_params(start, end)
+        metadata = self._build_metadata(params)
+        try:
+            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            tidy = self._normalise(response.json(), start, end)
+            metadata["fallback"] = "false"
+            metadata["rows"] = str(len(tidy))
+        except Exception as err:  # pragma: no cover - network safety
+            LOGGER.warning("ACLED fetch failed, using fallback: %s", err)
+            tidy = self._fallback(start, end)
+            metadata["fallback"] = "true"
+            metadata["error"] = str(err)
+            metadata["rows"] = str(len(tidy))
+        return IngestionResult(data=tidy, metadata=metadata)
 
 
 class SyntheticEconomicSource(DataSource):
@@ -124,6 +225,154 @@ class SyntheticEconomicSource(DataSource):
         return IngestionResult(data=df, metadata=metadata)
 
 
+class UNHCRSource(HTTPJSONSource):
+    """Connector for UNHCR population statistics with synthetic fallback."""
+
+    date_param = "startDate"
+    end_param = "endDate"
+
+    def build_params(self, start: datetime, end: datetime) -> MutableMapping[str, str]:
+        params = super().build_params(start, end)
+        params.setdefault("format", "json")
+        params.setdefault("population_group", "refugees")
+        return params
+
+    def _fallback(self, start: datetime, end: datetime) -> pd.DataFrame:
+        date_range = pd.date_range(start=start, end=end, freq="D")
+        countries = ["Burkina Faso", "Mali", "Niger"]
+        records = []
+        for idx, date in enumerate(date_range):
+            country = countries[idx % len(countries)]
+            records.append(
+                {
+                    "date": date,
+                    "country": country,
+                    "displaced_population": 5000 + (idx % 7) * 250,
+                }
+            )
+        return pd.DataFrame.from_records(records)
+
+    def _normalise(self, payload: object, start: datetime, end: datetime) -> pd.DataFrame:
+        data = pd.json_normalize(payload.get("data", payload.get("results", payload)))
+        if data.empty:
+            return self._fallback(start, end)
+        if "date" in data.columns:
+            data["date"] = pd.to_datetime(data["date"])
+        elif "record_date" in data.columns:
+            data["date"] = pd.to_datetime(data["record_date"])
+        else:
+            data["date"] = pd.date_range(start=start, periods=len(data), freq="D")
+        if "country" not in data.columns:
+            for candidate in ("coo_name", "country_origin", "origin_country_name"):
+                if candidate in data.columns:
+                    data["country"] = data[candidate]
+                    break
+        if "country" not in data.columns:
+            data["country"] = "GLOBAL"
+        value_col = None
+        for candidate in ("individuals", "value", "population", "people", "count"):
+            if candidate in data.columns:
+                value_col = candidate
+                break
+        if value_col is None:
+            data["displaced_population"] = 0
+            value_col = "displaced_population"
+        data = data.rename(columns={value_col: "displaced_population"})
+        tidy = data[["date", "country", "displaced_population"]]
+        return tidy.sort_values("date")
+
+    def fetch(self, start: datetime, end: datetime) -> IngestionResult:
+        params = self.build_params(start, end)
+        metadata = self._build_metadata(params)
+        try:
+            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            tidy = self._normalise(response.json(), start, end)
+            metadata["fallback"] = "false"
+            metadata["rows"] = str(len(tidy))
+        except Exception as err:  # pragma: no cover - network safety
+            LOGGER.warning("UNHCR fetch failed, using fallback: %s", err)
+            tidy = self._fallback(start, end)
+            metadata["fallback"] = "true"
+            metadata["error"] = str(err)
+            metadata["rows"] = str(len(tidy))
+        return IngestionResult(data=tidy, metadata=metadata)
+
+
+class HDXSource(HTTPJSONSource):
+    """Connector for HDX humanitarian operations with graceful degradation."""
+
+    date_param = "startDate"
+    end_param = "endDate"
+
+    def build_params(self, start: datetime, end: datetime) -> MutableMapping[str, str]:
+        params = super().build_params(start, end)
+        params.setdefault("format", "json")
+        params.setdefault("indicator", "access")
+        return params
+
+    def _fallback(self, start: datetime, end: datetime) -> pd.DataFrame:
+        date_range = pd.date_range(start=start, end=end, freq="D")
+        countries = ["Burkina Faso", "Mali", "Niger"]
+        records = []
+        for idx, date in enumerate(date_range):
+            country = countries[idx % len(countries)]
+            records.append(
+                {
+                    "date": date,
+                    "country": country,
+                    "access_constraint_score": 0.3 + (idx % 5) * 0.1,
+                }
+            )
+        return pd.DataFrame.from_records(records)
+
+    def _normalise(self, payload: object, start: datetime, end: datetime) -> pd.DataFrame:
+        data = pd.json_normalize(payload.get("data", payload.get("results", payload)))
+        if data.empty:
+            return self._fallback(start, end)
+        if "date" in data.columns:
+            data["date"] = pd.to_datetime(data["date"])
+        elif "report_date" in data.columns:
+            data["date"] = pd.to_datetime(data["report_date"])
+        else:
+            data["date"] = pd.date_range(start=start, periods=len(data), freq="D")
+        if "country" not in data.columns:
+            for candidate in ("admin1_name", "country_name", "iso3"):
+                if candidate in data.columns:
+                    data["country"] = data[candidate]
+                    break
+        if "country" not in data.columns:
+            data["country"] = "GLOBAL"
+        value_col = None
+        for candidate in ("access", "value", "score", "constraint"):
+            if candidate in data.columns:
+                value_col = candidate
+                break
+        if value_col is None:
+            data["access_constraint_score"] = 0.0
+            value_col = "access_constraint_score"
+        data = data.rename(columns={value_col: "access_constraint_score"})
+        tidy = data[["date", "country", "access_constraint_score"]]
+        return tidy.sort_values("date")
+
+    def fetch(self, start: datetime, end: datetime) -> IngestionResult:
+        params = self.build_params(start, end)
+        metadata = self._build_metadata(params)
+        try:
+            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            tidy = self._normalise(response.json(), start, end)
+            metadata["fallback"] = "false"
+            metadata["rows"] = str(len(tidy))
+        except Exception as err:  # pragma: no cover - network safety
+            LOGGER.warning("HDX fetch failed, using fallback: %s", err)
+            tidy = self._fallback(start, end)
+            metadata["fallback"] = "true"
+            metadata["error"] = str(err)
+            metadata["rows"] = str(len(tidy))
+        return IngestionResult(data=tidy, metadata=metadata)
+
+
 def build_sources(configs: Iterable[DataSourceConfig]) -> Dict[str, DataSource]:
     """Instantiate data sources from configuration definitions."""
 
@@ -131,6 +380,8 @@ def build_sources(configs: Iterable[DataSourceConfig]) -> Dict[str, DataSource]:
         "gdelt": GDELTSource,
         "acled": ACLEDSource,
         "synthetic_economic": SyntheticEconomicSource,
+        "unhcr": UNHCRSource,
+        "hdx": HDXSource,
     }
     sources: Dict[str, DataSource] = {}
     for cfg in configs:

@@ -42,22 +42,57 @@ def aggregate_events(events: pd.DataFrame, config: FeatureConfig) -> pd.DataFram
     return pivot.rolling(window=config.window_days, min_periods=1).sum()
 
 
-def combine_features(
-    event_features: Mapping[str, pd.DataFrame],
-    economic_features: Mapping[str, pd.DataFrame],
-) -> FeatureStore:
-    """Combine separate feature sources into a unified feature store."""
+def combine_features(feature_groups: Mapping[str, Mapping[str, pd.DataFrame]]) -> FeatureStore:
+    """Combine feature groups into a unified, aligned feature store."""
 
     tables: Dict[str, pd.DataFrame] = {}
-    for key, df in event_features.items():
-        tables[f"events__{key}"] = df
-    for key, df in economic_features.items():
-        tables[f"economic__{key}"] = df
+    for domain, features in feature_groups.items():
+        for key, df in features.items():
+            tables[f"{domain}__{key}"] = df
 
     aligned: Dict[str, pd.DataFrame] = {}
     for name, table in tables.items():
-        aligned[name] = table.sort_index().fillna(method="ffill").fillna(0)
+        aligned[name] = table.sort_index().ffill().fillna(0)
     return FeatureStore(tables=aligned)
+
+
+def _ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+    if "event_date" in df.columns:
+        df["date"] = pd.to_datetime(df["event_date"])
+        return df
+    raise ValueError("Expected a date or event_date column for feature aggregation")
+
+
+def _pivot_country_series(df: pd.DataFrame, value_column: str) -> pd.DataFrame:
+    if "country" not in df.columns:
+        df = df.copy()
+        df["country"] = "GLOBAL"
+    pivot = df.pivot_table(index="date", columns="country", values=value_column, aggfunc="sum")
+    return pivot.sort_index()
+
+
+def aggregate_humanitarian(data: pd.DataFrame, config: FeatureConfig) -> pd.DataFrame:
+    """Aggregate humanitarian indicators into rolling windows."""
+
+    df = _ensure_date_column(data.copy())
+    value_col = None
+    for candidate in (
+        "displaced_population",
+        "access_constraint_score",
+        "value",
+        "count",
+        "indicator",
+    ):
+        if candidate in df.columns:
+            value_col = candidate
+            break
+    if value_col is None:
+        raise ValueError("Humanitarian source lacks a numeric value column")
+    pivot = _pivot_country_series(df, value_col)
+    return pivot.rolling(window=config.window_days, min_periods=1).mean()
 
 
 def build_feature_store(
@@ -66,18 +101,27 @@ def build_feature_store(
 ) -> FeatureStore:
     """Build the feature store from raw ingestion outputs."""
 
-    event_features: Dict[str, pd.DataFrame] = {}
-    economic_features: Dict[str, pd.DataFrame] = {}
+    grouped_features: Dict[str, Dict[str, pd.DataFrame]] = {}
     for cfg in feature_configs:
-        if cfg.name.startswith("events_"):
+        domain, _, _ = cfg.name.partition("_")
+        grouped_features.setdefault(domain, {})
+        if domain == "events":
             df = aggregate_events(ingestion_results[cfg.inputs[0]], cfg)
-            event_features[cfg.name] = df
-        elif cfg.name.startswith("economic_"):
-            df = ingestion_results[cfg.inputs[0]].set_index("date").rolling(
-                window=cfg.window_days, min_periods=1
-            ).mean()
-            economic_features[cfg.name] = df
+            grouped_features[domain][cfg.name] = df
+        elif domain == "economic":
+            base = ingestion_results[cfg.inputs[0]].copy()
+            base["date"] = pd.to_datetime(base["date"])
+            base = (
+                base.set_index("date")
+                .sort_index()
+                .rolling(window=cfg.window_days, min_periods=1)
+                .mean()
+            )
+            grouped_features[domain][cfg.name] = base
+        elif domain == "humanitarian":
+            df = aggregate_humanitarian(ingestion_results[cfg.inputs[0]], cfg)
+            grouped_features[domain][cfg.name] = df
         else:
             raise ValueError(f"Unsupported feature type: {cfg.name}")
-    return combine_features(event_features=event_features, economic_features=economic_features)
+    return combine_features(feature_groups=grouped_features)
 
