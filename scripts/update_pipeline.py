@@ -38,8 +38,7 @@ def default_config(root: Path) -> PREACTConfig:
             name="ACLED",
             endpoint="https://api.acleddata.com/acled/read",
             requires_key=True,
-            key_env_var="ACLED_API_TOKEN",
-            key_param="key",
+            headers={"Authorization": "Bearer {key}"},
         ),
         DataSourceConfig(
             name="UNHCR",
