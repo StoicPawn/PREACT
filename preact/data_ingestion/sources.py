@@ -86,8 +86,16 @@ class GDELTSource(HTTPJSONSource):
     end_param = "enddatetime"
 
     def build_params(self, start: datetime, end: datetime) -> MutableMapping[str, str]:
-        params = super().build_params(start, end)
-        params.setdefault("format", "json")
+        params: MutableMapping[str, str] = {
+            self.date_param: start.strftime("%Y%m%d%H%M%S"),
+            self.end_param: end.strftime("%Y%m%d%H%M%S"),
+            "mode": "Events",
+            "sort": "DateAsc",
+            "maxrecords": "250",
+            "format": "json",
+        }
+        if self.config.params:
+            params.update(self.config.params)
         return params
 
     def _fallback(self, start: datetime, end: datetime) -> pd.DataFrame:
@@ -123,6 +131,8 @@ class GDELTSource(HTTPJSONSource):
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
         metadata = self._build_metadata(params)
+        metadata["start_iso"] = start.isoformat()
+        metadata["end_iso"] = end.isoformat()
         try:
             response = requests.get(self.config.endpoint, params=params, timeout=30)
             response.raise_for_status()
