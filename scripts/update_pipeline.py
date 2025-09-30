@@ -21,7 +21,7 @@ from preact.config import (
     PREACTConfig,
     StorageConfig,
 )
-from preact.data_ingestion.sources import build_sources, fetch_all
+from preact.data_ingestion import DataIngestionOrchestrator
 from preact.feature_store.builder import build_feature_store
 from preact.models.bayesian import BayesianExplainer
 from preact.models.predictor import PredictiveEngine
@@ -142,9 +142,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     config = default_config(root)
     save_config(config, root / "config.json")
 
-    sources = build_sources(config.data_sources)
-    raw_data = fetch_all(sources, lookback_days=args.lookback_days)
-    ingestion_frames = {name: result.data for name, result in raw_data.items() if result}
+    orchestrator = DataIngestionOrchestrator(config, lookback_days=args.lookback_days)
+    artifacts = orchestrator.run()
+    ingestion_frames = artifacts.silver
 
     feature_store = build_feature_store(ingestion_frames, config.features)
 
