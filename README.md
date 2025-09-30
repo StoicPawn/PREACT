@@ -66,6 +66,23 @@ scripts/
    thresholds. Use the sidebar to adjust the alert sensitivity or load validation
    outcomes for hindcasting studies.
 
+## Data Source Authentication
+
+Several upstream providers require authenticated access. Configure the following
+environment variables before running the pipeline:
+
+- `ACLED_USERNAME` and `ACLED_PASSWORD` – credentials used to request an OAuth access
+  token from ACLED. The ingestion connector automatically exchanges them for a bearer
+  token, caches it until expiry, and refreshes it as needed. Optional
+  `ACLED_CLIENT_ID` and `ACLED_CLIENT_SECRET` variables are included in the token
+  request when present.
+- `UNHCR_API_TOKEN` – bearer token for the UNHCR Population API.
+- `HDX_API_TOKEN` – bearer token for the Humanitarian Data Exchange API.
+
+Tokens are injected as `Authorization` headers when contacting the APIs. If required
+credentials are missing, the connector raises a descriptive error so you can provide
+the appropriate values.
+
 ## Evaluation and Backtesting
 
 - Historical hindcasting on cases such as Niger 2023 (coup), Sudan 2023 (atrocities),
