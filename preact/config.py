@@ -15,6 +15,9 @@ class DataSourceConfig:
     update_frequency: str = "daily"
     params: Dict[str, str] | None = None
     requires_key: bool = False
+    key_env_var: Optional[str] = None
+    key_param: Optional[str] = None
+    headers: Dict[str, str] | None = None
 
 
 @dataclass

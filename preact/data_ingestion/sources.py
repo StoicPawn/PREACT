@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import abc
 import json
+import os
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -70,13 +71,56 @@ class HTTPJSONSource(DataSource):
 
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
+        params, headers = self._apply_auth(params)
         LOGGER.info("Fetching %s from %s", self.config.name, self.config.endpoint)
-        response = requests.get(self.config.endpoint, params=params, timeout=30)
+        response = requests.get(
+            self.config.endpoint, params=params, headers=headers or None, timeout=30
+        )
         response.raise_for_status()
         payload = response.json()
         data = pd.json_normalize(payload.get("results", payload))
         metadata = self._build_metadata(params)
         return IngestionResult(data=data, metadata=metadata)
+
+    def _apply_auth(
+        self, params: MutableMapping[str, str]
+    ) -> tuple[MutableMapping[str, str], Dict[str, str] | None]:
+        headers: Dict[str, str] | None = None
+        if self.config.headers:
+            headers = dict(self.config.headers)
+
+        key_value: Optional[str] = None
+        if self.config.key_env_var:
+            key_value = os.environ.get(self.config.key_env_var)
+            if not key_value and self.config.requires_key:
+                raise RuntimeError(
+                    "API key required but environment variable "
+                    f"{self.config.key_env_var} is not set"
+                )
+        elif self.config.requires_key:
+            raise RuntimeError(
+                "Data source requires an API key but no key_env_var was provided"
+            )
+
+        if key_value:
+            if self.config.key_param:
+                params.setdefault(self.config.key_param, key_value)
+            else:
+                inserted = False
+                if headers is None:
+                    headers = {}
+                updated_headers: Dict[str, str] = {}
+                for name, value in headers.items():
+                    if "{key}" in value:
+                        updated_headers[name] = value.format(key=key_value)
+                        inserted = True
+                    else:
+                        updated_headers[name] = value
+                headers = updated_headers
+                if not inserted:
+                    headers.setdefault("Authorization", key_value)
+
+        return params, headers
 
 
 class GDELTSource(HTTPJSONSource):
@@ -130,11 +174,17 @@ class GDELTSource(HTTPJSONSource):
 
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
+        params, headers = self._apply_auth(params)
         metadata = self._build_metadata(params)
         metadata["start_iso"] = start.isoformat()
         metadata["end_iso"] = end.isoformat()
         try:
-            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response = requests.get(
+                self.config.endpoint,
+                params=params,
+                headers=headers or None,
+                timeout=30,
+            )
             response.raise_for_status()
             tidy = self._normalise(response.json(), start, end)
             metadata["fallback"] = "false"
@@ -196,9 +246,15 @@ class ACLEDSource(HTTPJSONSource):
 
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
+        params, headers = self._apply_auth(params)
         metadata = self._build_metadata(params)
         try:
-            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response = requests.get(
+                self.config.endpoint,
+                params=params,
+                headers=headers or None,
+                timeout=30,
+            )
             response.raise_for_status()
             tidy = self._normalise(response.json(), start, end)
             metadata["fallback"] = "false"
@@ -293,9 +349,15 @@ class UNHCRSource(HTTPJSONSource):
 
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
+        params, headers = self._apply_auth(params)
         metadata = self._build_metadata(params)
         try:
-            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response = requests.get(
+                self.config.endpoint,
+                params=params,
+                headers=headers or None,
+                timeout=30,
+            )
             response.raise_for_status()
             tidy = self._normalise(response.json(), start, end)
             metadata["fallback"] = "false"
@@ -367,9 +429,15 @@ class HDXSource(HTTPJSONSource):
 
     def fetch(self, start: datetime, end: datetime) -> IngestionResult:
         params = self.build_params(start, end)
+        params, headers = self._apply_auth(params)
         metadata = self._build_metadata(params)
         try:
-            response = requests.get(self.config.endpoint, params=params, timeout=30)
+            response = requests.get(
+                self.config.endpoint,
+                params=params,
+                headers=headers or None,
+                timeout=30,
+            )
             response.raise_for_status()
             tidy = self._normalise(response.json(), start, end)
             metadata["fallback"] = "false"
