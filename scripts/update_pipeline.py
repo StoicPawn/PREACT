@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import datetime
@@ -55,7 +56,21 @@ def default_config(root: Path) -> PREACTConfig:
             key_env_var="HDX_API_TOKEN",
             headers={"Authorization": "Bearer {key}"},
         ),
-        DataSourceConfig(name="Synthetic_Economic", endpoint="synthetic"),
+        DataSourceConfig(
+            name="Economic_Indicators",
+            endpoint="https://api.worldbank.org/v2/country/{country}/indicator/{indicator}",
+            params={
+                "country": "WLD",
+                "indicators": "FP.CPI.TOTL.ZG,NY.GDP.MKTP.KD.ZG",
+                "aliases": json.dumps(
+                    {
+                        "FP.CPI.TOTL.ZG": "inflation_rate",
+                        "NY.GDP.MKTP.KD.ZG": "gdp_growth",
+                    }
+                ),
+                "per_page": "2000",
+            },
+        ),
     ]
     features = [
         FeatureConfig(
@@ -72,7 +87,7 @@ def default_config(root: Path) -> PREACTConfig:
         ),
         FeatureConfig(
             name="economic_pressure",
-            inputs=["Synthetic_Economic"],
+            inputs=["Economic_Indicators"],
             aggregation="mean",
             window_days=14,
         ),

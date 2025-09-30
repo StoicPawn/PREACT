@@ -110,13 +110,21 @@ def build_feature_store(
             grouped_features[domain][cfg.name] = df
         elif domain == "economic":
             base = ingestion_results[cfg.inputs[0]].copy()
+            if base.empty:
+                empty_index = pd.DatetimeIndex([], name="date")
+                grouped_features[domain][cfg.name] = pd.DataFrame(index=empty_index)
+                continue
             base["date"] = pd.to_datetime(base["date"])
-            base = (
-                base.set_index("date")
-                .sort_index()
-                .rolling(window=cfg.window_days, min_periods=1)
-                .mean()
-            )
+            value_cols = [col for col in base.columns if col != "date"]
+            if not value_cols:
+                raise ValueError("Economic source lacks numeric columns")
+            for column in value_cols:
+                base[column] = pd.to_numeric(base[column], errors="coerce")
+            base = base.groupby("date", as_index=True)[value_cols].mean().sort_index()
+            full_index = pd.date_range(start=base.index.min(), end=base.index.max(), freq="D")
+            base = base.reindex(full_index).ffill().dropna(how="all")
+            base.index.name = "date"
+            base = base.rolling(window=cfg.window_days, min_periods=1).mean()
             grouped_features[domain][cfg.name] = base
         elif domain == "humanitarian":
             df = aggregate_humanitarian(ingestion_results[cfg.inputs[0]], cfg)

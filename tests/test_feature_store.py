@@ -36,10 +36,11 @@ def test_build_feature_store_combines_tables():
                 "country": ["A"],
             }
         ),
-        "Synthetic_Economic": pd.DataFrame(
+        "Economic_Indicators": pd.DataFrame(
             {
                 "date": ["2023-01-01"],
-                "food_price_index": [100],
+                "inflation_rate": [5.0],
+                "gdp_growth": [3.2],
             }
         ),
         "UNHCR": pd.DataFrame(
@@ -59,7 +60,7 @@ def test_build_feature_store_combines_tables():
         ),
         FeatureConfig(
             name="economic_pressure",
-            inputs=["Synthetic_Economic"],
+            inputs=["Economic_Indicators"],
             aggregation="mean",
             window_days=14,
         ),
