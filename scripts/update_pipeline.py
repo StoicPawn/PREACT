@@ -33,12 +33,27 @@ logging.basicConfig(level=logging.INFO)
 def default_config(root: Path) -> PREACTConfig:
     data_sources = [
         DataSourceConfig(name="GDELT", endpoint="https://api.gdeltproject.org/api/v2/events"),
-        DataSourceConfig(name="ACLED", endpoint="https://api.acleddata.com/acled/read"),
-        DataSourceConfig(name="UNHCR", endpoint="https://api.unhcr.org/population/v1/population"),
+        DataSourceConfig(
+            name="ACLED",
+            endpoint="https://api.acleddata.com/acled/read",
+            requires_key=True,
+            key_env_var="ACLED_API_TOKEN",
+            key_param="key",
+        ),
+        DataSourceConfig(
+            name="UNHCR",
+            endpoint="https://api.unhcr.org/population/v1/population",
+            requires_key=True,
+            key_env_var="UNHCR_API_TOKEN",
+            headers={"Authorization": "Bearer {key}"},
+        ),
         DataSourceConfig(
             name="HDX",
             endpoint="https://data.humdata.org/hxlproxy/data/download",
             params={"format": "json"},
+            requires_key=True,
+            key_env_var="HDX_API_TOKEN",
+            headers={"Authorization": "Bearer {key}"},
         ),
         DataSourceConfig(name="Synthetic_Economic", endpoint="synthetic"),
     ]
