@@ -1,10 +1,11 @@
 """Data ingestion utilities for PREACT."""
+from .orchestrator import DataIngestionOrchestrator, IngestionArtifacts
 from .sources import (
     ACLEDSource,
     DataSource,
+    EconomicIndicatorSource,
     GDELTSource,
     HDXSource,
-    SyntheticEconomicSource,
     UNHCRSource,
     build_sources,
     fetch_all,
@@ -12,12 +13,13 @@ from .sources import (
 
 __all__ = [
     "ACLEDSource",
+    "DataIngestionOrchestrator",
     "DataSource",
+    "EconomicIndicatorSource",
     "GDELTSource",
     "HDXSource",
-    "SyntheticEconomicSource",
+    "IngestionArtifacts",
     "UNHCRSource",
     "build_sources",
     "fetch_all",
 ]
-
