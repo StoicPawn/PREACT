@@ -18,8 +18,11 @@ from preact.simulation import SimulationRepository, SimulationService, default_t
 
 from preact.dashboard.layout import (
     comparison_payload,
+    render_equity_section,
+    render_executive_panel,
     render_downloads,
     render_kpi_grid,
+    render_macro_section,
     render_policy_controls,
     render_timeline,
     render_winners_section,
@@ -186,19 +189,55 @@ with results_tab:
         )
         comparison = comparison_payload(base_results, reform_results)
 
-        render_kpi_grid(base_results.kpis(), comparison)
+        def _normalize_takeaway(value: object) -> object:
+            if isinstance(value, dict):
+                return [f"{key}: {val}" for key, val in value.items()]
+            if isinstance(value, (list, tuple, set)):
+                return list(value)
+            if isinstance(value, str):
+                return value
+            return str(value)
 
-        timeline_col1, timeline_col2, timeline_col3 = st.columns(3)
-        with timeline_col1:
-            render_timeline("tax_revenue", base_results, reform_results)
-        with timeline_col2:
-            render_timeline("budget_balance", base_results, reform_results)
-        with timeline_col3:
-            render_timeline("sentiment", base_results, reform_results)
+        takeaways_payload: Dict[str, object] = {}
+        base_takeaways = summary.base_kpis.get("takeaways") if summary.base_kpis else None
+        if base_takeaways:
+            takeaways_payload[base_results.scenario_name or "Scenario base"] = _normalize_takeaway(base_takeaways)
+        if reform_results and summary.reform_kpis:
+            reform_takeaways = summary.reform_kpis.get("takeaways")
+            if reform_takeaways:
+                takeaways_payload[reform_results.scenario_name or "Scenario riforma"] = _normalize_takeaway(reform_takeaways)
 
-        render_winners_section(base_results, reform_results)
+        executive_tab, equity_tab, macro_tab = st.tabs(["Executive", "Equità", "Macro"])
 
-        render_downloads(summary, repository, enable_reform=bool(reform_results))
+        with executive_tab:
+            render_executive_panel(
+                base_results,
+                reform=reform_results,
+                comparison=comparison,
+                takeaways=takeaways_payload or None,
+            )
+            with st.expander("Altri KPI", expanded=False):
+                render_kpi_grid(summary.base_kpis, comparison)
+
+        with equity_tab:
+            render_equity_section(base_results, reform_results)
+
+        with macro_tab:
+            render_macro_section(base_results, reform_results)
+            st.divider()
+            st.markdown("#### Finanza pubblica")
+            fiscal_columns = st.columns(2)
+            with fiscal_columns[0]:
+                render_timeline("tax_revenue", base_results, reform_results)
+            with fiscal_columns[1]:
+                render_timeline("budget_balance", base_results, reform_results)
+
+        st.divider()
+        with st.expander("Winners & losers", expanded=False):
+            render_winners_section(base_results, reform_results)
+
+        with st.expander("Export risultati", expanded=True):
+            render_downloads(summary, repository, enable_reform=bool(reform_results))
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point
