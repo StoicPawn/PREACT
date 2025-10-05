@@ -56,6 +56,8 @@ def test_gdelt_normalise_payload() -> None:
         "event_id",
         "event_date",
         "country",
+        "actor1_country",
+        "actor2_country",
         "actor1",
         "actor2",
         "themes",
