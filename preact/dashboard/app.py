@@ -30,8 +30,13 @@ def load_predictions(path: Path) -> Dict[str, pd.Series]:
 
     predictions: Dict[str, pd.Series] = {}
     for file in path.glob("*.parquet"):
-        series = pd.read_parquet(file)["probability"]
-        predictions[file.stem] = series
+        frame = pd.read_parquet(file)
+        series = frame["probability"]
+        if "country" in frame.columns:
+            name = str(frame["country"].iloc[0])
+        else:
+            name = file.stem.replace("_", " ").title()
+        predictions[name] = series
     return predictions
 
 

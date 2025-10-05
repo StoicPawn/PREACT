@@ -25,6 +25,7 @@ from preact.data_ingestion import DataIngestionOrchestrator
 from preact.feature_store.builder import build_feature_store
 from preact.models.bayesian import BayesianExplainer
 from preact.models.predictor import PredictiveEngine
+from preact.pipeline import run_mvp_prediction_pipeline
 from preact.utils.io import save_config
 
 LOGGER = logging.getLogger(__name__)
@@ -142,6 +143,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     config = default_config(root)
     save_config(config, root / "config.json")
 
+    if args.mode == "synthetic":
+        artifacts = run_mvp_prediction_pipeline(root, config, days=args.lookback_days)
+        LOGGER.info(
+            "Synthetic pipeline completed for %d countries", len(artifacts.predictions)
+        )
+        return
+
     orchestrator = DataIngestionOrchestrator(config, lookback_days=args.lookback_days)
     artifacts = orchestrator.run()
     ingestion_frames = artifacts.silver
@@ -167,12 +175,18 @@ def run_pipeline(args: argparse.Namespace) -> None:
         df.to_parquet(predictions_dir / f"{output.name}.parquet")
     evidence.to_json(predictions_dir / "bayesian_evidence.json", orient="records", indent=2)
 
-    LOGGER.info("Pipeline completed with %d models", len(outputs))
+    LOGGER.info("Live pipeline completed with %d models", len(outputs))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the PREACT daily pipeline")
     parser.add_argument("--output-dir", type=str, default="data", help="Directory for outputs")
     parser.add_argument("--lookback-days", type=int, default=30, help="Days of history to fetch")
+    parser.add_argument(
+        "--mode",
+        choices=("synthetic", "live"),
+        default="synthetic",
+        help="Run the offline synthetic pipeline or the live data pipeline",
+    )
     run_pipeline(parser.parse_args())
 
