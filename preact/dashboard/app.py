@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlencode
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = PACKAGE_ROOT.parent
@@ -14,7 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import streamlit as st
 
-from preact.simulation import SimulationRepository, SimulationService, default_templates
+from preact.simulation import (
+    SimulationComparison,
+    SimulationRepository,
+    SimulationRunSummary,
+    SimulationService,
+    default_templates,
+)
 
 from preact.dashboard.layout import (
     comparison_payload,
@@ -56,10 +65,29 @@ def _config_state() -> Dict[str, Any]:
     return st.session_state["config"]
 
 
+def _read_query_params() -> Dict[str, list[str]]:
+    try:
+        params = st.query_params  # type: ignore[attr-defined]
+    except AttributeError:
+        return st.experimental_get_query_params()
+    return {key: [value] for key, value in params.to_dict().items()}
+
+
+def _write_query_params(params: Dict[str, str]) -> None:
+    try:
+        query_params = st.query_params  # type: ignore[attr-defined]
+    except AttributeError:
+        st.experimental_set_query_params(**params)
+        return
+    query_params.clear()
+    query_params.update(params)
+
+
 service = _init_service()
 repository = _get_repository()
 templates = {template.name: template for template in default_templates().values()}
 state = _config_state()
+query_params = _read_query_params()
 
 config_tab, run_tab, results_tab = st.tabs(["Config", "Run", "Results"])
 
@@ -158,17 +186,120 @@ with run_tab:
         )
 
         if st.button("Esegui simulazione", type="primary"):
+            progress_bar = st.progress(0, text="Preparazione scenario...")
+            status_placeholder = st.empty()
+            log_container = st.container()
+            log_placeholder = log_container.empty()
+
+            start_time = time.perf_counter()
+            scenario_labels = ["Scenario base"]
+            if state.get("reform_enabled") and state.get("reform_policy"):
+                scenario_labels.append("Scenario riforma")
+            horizon_value = int(state["horizon"])
+            total_ticks = max(len(scenario_labels) * horizon_value, 1)
+
+            progress_state: Dict[str, Any] = {
+                "scenario_index": 0,
+                "last_tick": None,
+                "last_horizon": horizon_value,
+            }
+            log_history: list[str] = []
+
+            def _on_progress(tick: int, horizon: int, messages: list[str]) -> None:
+                if (
+                    tick == 0
+                    and progress_state["last_tick"] is not None
+                    and progress_state["last_horizon"] is not None
+                    and progress_state["last_tick"] == progress_state["last_horizon"] - 1
+                ):
+                    progress_state["scenario_index"] = min(
+                        progress_state["scenario_index"] + 1,
+                        len(scenario_labels) - 1,
+                    )
+
+                progress_state["last_tick"] = tick
+                progress_state["last_horizon"] = horizon
+                scenario_label = scenario_labels[progress_state["scenario_index"]]
+
+                global_tick = progress_state["scenario_index"] * horizon_value + tick + 1
+                completion = min(global_tick / total_ticks, 1.0)
+                progress_bar.progress(
+                    completion,
+                    text=f"{scenario_label} – step {tick + 1}/{horizon}",
+                )
+
+                elapsed = time.perf_counter() - start_time
+                eta_text = "--"
+                if global_tick and global_tick < total_ticks:
+                    rate = elapsed / global_tick
+                    eta_seconds = max(int(rate * (total_ticks - global_tick)), 0)
+                    eta_text = str(datetime.timedelta(seconds=eta_seconds))
+                status_placeholder.caption(
+                    f"Tempo trascorso: {elapsed:.1f}s · ETA: {eta_text}"
+                )
+
+                log_history.extend(messages)
+                formatted_logs = "\n".join(f"• {message}" for message in log_history[-50:])
+                log_placeholder.markdown(formatted_logs or "Inizializzazione...")
+
             with st.spinner("Esecuzione in corso..."):
                 summary = service.run(
                     template_name=state["template"],
-                    horizon=int(state["horizon"]),
+                    horizon=horizon_value,
                     seed=int(state.get("seed", 42)),
                     base_policy_payload=state.get("base_policy"),
                     policy_payload=state.get("reform_policy") if state.get("reform_enabled") else None,
                     metadata={"source": "streamlit"},
+                    progress_callback=_on_progress,
                 )
+
+            progress_bar.progress(1.0, text="Simulazione completata")
+            status_placeholder.caption("Esecuzione terminata")
             st.session_state["last_summary"] = summary
+
             st.success("Simulazione completata. Consulta i risultati nella scheda dedicata.")
+
+            st.markdown("#### Riepilogo esecuzione")
+            base_budget = summary.base_kpis.get("budget_balance") if summary.base_kpis else None
+            base_sentiment = summary.base_kpis.get("sentiment") if summary.base_kpis else None
+            st.write(
+                "Scenario base",
+                f"Run ID: `{summary.base_run_id}`",
+                f"Saldo di bilancio: {base_budget:.2f}" if base_budget is not None else "",
+                f"Sentiment: {base_sentiment:.2f}" if base_sentiment is not None else "",
+            )
+            if summary.reform_run_id and summary.reform_kpis:
+                reform_budget = summary.reform_kpis.get("budget_balance")
+                reform_sentiment = summary.reform_kpis.get("sentiment")
+                st.write(
+                    "Scenario riforma",
+                    f"Run ID: `{summary.reform_run_id}`",
+                    f"Saldo di bilancio: {reform_budget:.2f}" if reform_budget is not None else "",
+                    f"Sentiment: {reform_sentiment:.2f}" if reform_sentiment is not None else "",
+                )
+            if summary.comparison:
+                delta_budget = summary.comparison.get("budget_balance")
+                delta_sentiment = summary.comparison.get("sentiment")
+                st.caption(
+                    "Δ Riforma vs Base – "
+                    + ", ".join(
+                        filter(
+                            None,
+                            [
+                                f"Bilancio: {delta_budget:+.2f}" if delta_budget is not None else None,
+                                f"Sentiment: {delta_sentiment:+.2f}" if delta_sentiment is not None else None,
+                            ],
+                        )
+                    )
+                )
+
+            link_params = {"base": summary.base_run_id}
+            if summary.reform_run_id:
+                link_params["reform"] = summary.reform_run_id
+            link_target = f"?{urlencode(link_params)}#results"
+            st.link_button("Compare with Base", link_target, type="primary")
+
+            _write_query_params(link_params)
 
 
 with results_tab:
@@ -180,6 +311,25 @@ with results_tab:
     )
 
     summary = st.session_state.get("last_summary")
+    if not summary and query_params.get("base"):
+        base_run_id = query_params["base"][0]
+        reform_values = query_params.get("reform")
+        reform_run_id = reform_values[0] if reform_values else None
+        base_results = service.fetch(base_run_id)
+        reform_results = service.fetch(reform_run_id) if reform_run_id else None
+        comparison = (
+            SimulationComparison(base=base_results, reform=reform_results).delta()
+            if reform_results
+            else None
+        )
+        summary = SimulationRunSummary(
+            base_run_id=base_run_id,
+            base_kpis=base_results.kpis(),
+            reform_run_id=reform_run_id,
+            reform_kpis=reform_results.kpis() if reform_results else None,
+            comparison=comparison,
+        )
+        st.session_state["last_summary"] = summary
     if not summary:
         st.info("Nessuna esecuzione disponibile. Avvia una simulazione dalla scheda 'Run'.")
     else:

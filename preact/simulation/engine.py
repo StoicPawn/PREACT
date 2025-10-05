@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import pandas as pd
 
@@ -20,6 +20,9 @@ class SimulationConfig:
     horizon: int = 12
     time_step: str = "month"
     store_agent_history: bool = True
+
+
+SimulationProgressCallback = Callable[[int, int, list[str]], None]
 
 
 class SimulationEngine:
@@ -44,7 +47,12 @@ class SimulationEngine:
         sentiment_core = self._sentiment_core or SentimentCore()
         return policy_core, economy_core, sentiment_core
 
-    def run(self, scenario: Scenario) -> "SimulationResults":
+    def run(
+        self,
+        scenario: Scenario,
+        *,
+        progress_callback: SimulationProgressCallback | None = None,
+    ) -> "SimulationResults":
         """Execute the simulation for the provided scenario."""
 
         config = self.simulation_config or scenario.simulation_config
@@ -103,21 +111,32 @@ class SimulationEngine:
             )
             previous_state = state
 
-            timeline_records.append(
-                {
-                    "tick": tick,
-                    "tax_revenue": float(fiscal_frame["tax_liability"].sum()),
-                    "transfer_spending": float(fiscal_frame["transfers"].sum()),
-                    "budget_balance": float(fiscal_frame["tax_liability"].sum() - fiscal_frame["transfers"].sum()),
-                    "unemployment_rate": state.unemployment_rate,
-                    "employment_rate": state.employment_rate,
-                    "consumption_total": float(consumption.sum()),
-                    "consumption_mean": float(consumption.mean()),
-                    "cpi": state.cpi,
-                    "sentiment": sentiment,
-                    "labour_demand_ratio": state.labour_demand_ratio,
-                }
-            )
+            tick_record = {
+                "tick": tick,
+                "tax_revenue": float(fiscal_frame["tax_liability"].sum()),
+                "transfer_spending": float(fiscal_frame["transfers"].sum()),
+                "budget_balance": float(
+                    fiscal_frame["tax_liability"].sum() - fiscal_frame["transfers"].sum()
+                ),
+                "unemployment_rate": state.unemployment_rate,
+                "employment_rate": state.employment_rate,
+                "consumption_total": float(consumption.sum()),
+                "consumption_mean": float(consumption.mean()),
+                "cpi": state.cpi,
+                "sentiment": sentiment,
+                "labour_demand_ratio": state.labour_demand_ratio,
+            }
+            timeline_records.append(tick_record)
+
+            if progress_callback:
+                log_messages = [
+                    f"Budget balance: {tick_record['budget_balance']:.2f}",
+                    f"Employment rate: {tick_record['employment_rate']:.1%}",
+                    f"Unemployment rate: {tick_record['unemployment_rate']:.1%}",
+                    f"CPI: {tick_record['cpi']:.2f}",
+                    f"Sentiment: {tick_record['sentiment']:.2f}",
+                ]
+                progress_callback(tick, config.horizon, log_messages)
 
         average_disposable = disposable_history / config.horizon
         average_consumption = consumption_history / config.horizon
