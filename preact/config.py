@@ -1,4 +1,5 @@
-"""Configuration models for the PREACT early warning system."""
+"""Configuration models for the PREACT platform."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

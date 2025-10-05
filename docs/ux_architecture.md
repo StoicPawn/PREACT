@@ -12,6 +12,8 @@ Questo documento definisce la struttura informativa e i componenti principali de
 - **Quick actions**
   - Pulsanti rapidi per creare un nuovo scenario, duplicare uno scenario esistente o importare un template preconfigurato.
   - Accesso a wizard contestuali e a tutorial guidati.
+- **Focus fiscale/welfare**
+  - Widget dedicati a riforme tributarie o di trasferimento con link diretto a template e analisi preconfigurate.
 
 ## 2. Scenario Studio (core del prodotto)
 - **Policy Builder**
@@ -30,6 +32,8 @@ Questo documento definisce la struttura informativa e i componenti principali de
 - **Validation Rules**
   - Definizione di vincoli hard/soft su budget, sostenibilità e limiti normativi.
   - Indicatori visivi che segnalano violazioni o conflitti tra regole configurate.
+- **Blueprint use-case**
+  - Checklist guidata per le riforme fiscali/welfare che suggerisce parametri obbligatori, dataset consigliati e best practice.
 
 ## 3. Simulation Run & Monitor
 - **Console in tempo reale**
@@ -55,6 +59,8 @@ Questo documento definisce la struttura informativa e i componenti principali de
 - **Narrative Report**
   - Generazione assistita da LLM di un executive summary corredato da figure e note metodologiche.
   - Editor per revisionare il testo e inserire commenti collaborativi.
+- **Policy Brief Generator**
+  - Template automatici per executive summary destinati a ministeri e municipalità, con raccomandazioni e trade-off principali.
 - **Export**
   - Esportazione in PDF/HTML dei report, in CSV/Parquet dei dataset generati e notebook template (Jupyter) per analisi avanzate.
 

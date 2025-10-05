@@ -1,4 +1,5 @@
-"""Synthetic MVP pipeline to produce model-ready predictions."""
+"""Minimal viable prediction pipeline for PREACT."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
