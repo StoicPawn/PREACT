@@ -37,6 +37,8 @@ class DummyOrchestrator:
                     "event_id": "1",
                     "event_date": pd.Timestamp("2024-03-01"),
                     "country": "ITA",
+                    "actor1_country": "ITA",
+                    "actor2_country": "FRA",
                     "actor1": "Government",
                     "actor2": "Citizens",
                     "themes": "POL_GOV",
@@ -54,7 +56,7 @@ class DummyOrchestrator:
             metadata={"rows": "1", "fallback": "false"},
         )
 
-        def fake_recent_events(*, days: int, query, limit: int):  # type: ignore[no-untyped-def]
+        def fake_recent_events(*, days: int, query, limit: int | None):  # type: ignore[no-untyped-def]
             self.recent_args = {"days": days, "query": query, "limit": limit}
             return self.gdelt_result
 
@@ -113,6 +115,21 @@ def test_gdelt_events_endpoint_filters(tmp_path) -> None:
     assert orchestrator.recent_args["limit"] == 5
     query = orchestrator.recent_args["query"]
     assert query is not None and query.countries[0].lower() == "ita"
+
+
+def test_gdelt_state_graph_endpoint(tmp_path) -> None:
+    client, orchestrator, _service = create_test_client(tmp_path)
+    response = client.get(
+        "/gdelt/state-graph",
+        params={"lookback_days": 14, "limit": 50, "min_events": 1},
+    )
+    payload = response.json()
+    assert payload["edges"][0]["source"] == "ITA"
+    assert payload["edges"][0]["target"] == "FRA"
+    states = {node["state"] for node in payload["nodes"]}
+    assert {"ITA", "FRA"}.issubset(states)
+    assert payload["metadata"]["edges"] == 1
+    assert orchestrator.recent_args["days"] == 14
 
 def test_simulation_run_and_results_endpoint(tmp_path) -> None:
     client, _orchestrator, _service = create_test_client(tmp_path)

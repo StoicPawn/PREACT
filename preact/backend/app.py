@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when Pydantic is unav
     install_pydantic_stub()
     from pydantic import BaseModel, Field, validator  # type: ignore
 
+from ..analytics import StateGraph, build_state_graph
 from ..config import PREACTConfig
 from ..data_ingestion.orchestrator import DataIngestionOrchestrator
 from ..data_ingestion.sources import GDELTQuery, GDELTSource, IngestionResult
@@ -137,25 +138,12 @@ def _summarise_ingestion(result: Any) -> Dict[str, Dict[str, int]]:
     }
 
 
-def _serialise_events(frame: pd.DataFrame, limit: int) -> Iterable[Dict[str, Any]]:
+def _serialise_records(frame: pd.DataFrame, limit: int | None = None) -> Iterable[Dict[str, Any]]:
     if frame.empty:
         return []
-    columns = [
-        "event_id",
-        "event_date",
-        "country",
-        "actor1",
-        "actor2",
-        "themes",
-        "tone",
-        "goldstein",
-        "num_articles",
-        "source_url",
-        "latitude",
-        "longitude",
-    ]
-    available = [column for column in columns if column in frame.columns]
-    subset = frame.loc[:, available].head(limit)
+    subset = frame
+    if limit is not None:
+        subset = subset.head(limit)
     records = []
     for _, row in subset.iterrows():
         record: Dict[str, Any] = {}
@@ -170,6 +158,28 @@ def _serialise_events(frame: pd.DataFrame, limit: int) -> Iterable[Dict[str, Any
                 record[column] = value
         records.append(record)
     return records
+
+
+def _serialise_events(frame: pd.DataFrame, limit: int) -> Iterable[Dict[str, Any]]:
+    columns = [
+        "event_id",
+        "event_date",
+        "country",
+        "actor1_country",
+        "actor2_country",
+        "actor1",
+        "actor2",
+        "themes",
+        "tone",
+        "goldstein",
+        "num_articles",
+        "source_url",
+        "latitude",
+        "longitude",
+    ]
+    available = [column for column in columns if column in frame.columns]
+    subset = frame.loc[:, available]
+    return _serialise_records(subset, limit)
 
 
 def _find_gdelt_source(orchestrator: DataIngestionOrchestrator) -> GDELTSource:
@@ -281,5 +291,42 @@ def create_app(
         events = _serialise_events(result.data, limit)
         metadata = _normalise_metadata(result.metadata)
         return {"events": list(events), "metadata": metadata}
+
+    @app.get("/gdelt/state-graph")
+    def gdelt_state_graph(
+        lookback_days: int = Query(30, ge=1, le=365),
+        limit: int = Query(250, ge=10, le=250),
+        min_events: int = Query(1, ge=1),
+        min_weight: float | None = Query(None, ge=0),
+        include_self_loops: bool = Query(False),
+        country: str | None = Query(None, description="ISO country code filter"),
+        theme: str | None = Query(None, description="GDELT theme identifier"),
+        keyword: str | None = Query(None, description="Keyword to search"),
+        tone_min: float | None = Query(None, description="Minimum tone filter"),
+        tone_max: float | None = Query(None, description="Maximum tone filter"),
+    ) -> Dict[str, Any]:
+        source = _find_gdelt_source(orchestrator)
+        query = GDELTQuery(
+            keywords=[keyword] if keyword else (),
+            countries=[country] if country else (),
+            themes=[theme] if theme else (),
+            tone_min=tone_min,
+            tone_max=tone_max,
+        )
+        result = source.recent_events(days=lookback_days, query=query, limit=limit)
+        graph: StateGraph = build_state_graph(
+            result.data,
+            weight_column="num_articles",
+            min_events=min_events,
+            min_weight=min_weight,
+            include_self_loops=include_self_loops,
+        )
+        edges = list(_serialise_records(graph.edges))
+        nodes = list(_serialise_records(graph.nodes))
+        metadata = _normalise_metadata(result.metadata)
+        metadata["edges"] = len(edges)
+        metadata["nodes"] = len(nodes)
+        metadata["query"] = result.metadata.get("query", "")
+        return {"edges": edges, "nodes": nodes, "metadata": metadata}
 
     return app

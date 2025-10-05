@@ -183,6 +183,32 @@ class GDELTSource(HTTPJSONSource):
             .fillna("GLOBAL")
             .str.upper()
         )
+        tidy["actor1_country"] = (
+            self._coalesce_columns(
+                data,
+                "Actor1CountryCode",
+                "Actor1Geo_CountryCode",
+                default="",
+            )
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        tidy["actor1_country"] = tidy["actor1_country"].replace("", pd.NA)
+        tidy["actor2_country"] = (
+            self._coalesce_columns(
+                data,
+                "Actor2CountryCode",
+                "Actor2Geo_CountryCode",
+                default="",
+            )
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        tidy["actor2_country"] = tidy["actor2_country"].replace("", pd.NA)
         tidy["actor1"] = self._coalesce_columns(
             data, "Actor1Name", "Actor1Code", default="UNKNOWN"
         ).fillna("UNKNOWN")
@@ -228,6 +254,26 @@ class GDELTSource(HTTPJSONSource):
         tidy = tidy.sort_values("event_date").reset_index(drop=True)
         tidy["event_date"] = pd.to_datetime(tidy["event_date"], errors="coerce")
         tidy["event_date"] = tidy["event_date"].fillna(pd.Timestamp(start))
+        preferred_columns = [
+            "event_id",
+            "event_date",
+            "country",
+            "actor1_country",
+            "actor2_country",
+            "actor1",
+            "actor2",
+            "themes",
+            "source_url",
+            "num_articles",
+            "tone",
+            "goldstein",
+            "latitude",
+            "longitude",
+        ]
+        existing_columns = [
+            column for column in preferred_columns if column in tidy.columns
+        ]
+        tidy = tidy.loc[:, existing_columns]
         return tidy
 
     def fetch_events(
