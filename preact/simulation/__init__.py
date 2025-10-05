@@ -7,7 +7,7 @@ scenario building utilities and result summarisation helpers.
 """
 
 from .engine import SimulationEngine, SimulationConfig
-from .policy import PolicyCore, PolicyParameters, TaxBracket
+from .policy import PolicyCore, PolicyParameters, PolicyAdjustment, TaxBracket
 from .economy import EconomyCore, EconomyParameters, EconomyState, Shock
 from .sentiment import SentimentCore, SentimentWeights
 from .scenario import (
@@ -20,12 +20,14 @@ from .results import SimulationResults, SimulationComparison
 from .storage import SimulationRepository
 from .service import SimulationService, SimulationRunSummary
 from .templates import ScenarioTemplate, default_templates
+from .events import GlobalEvent, EventTimeline, EventSnapshot
 
 __all__ = [
     "SimulationEngine",
     "SimulationConfig",
     "PolicyCore",
     "PolicyParameters",
+    "PolicyAdjustment",
     "TaxBracket",
     "EconomyCore",
     "EconomyParameters",
@@ -44,4 +46,7 @@ __all__ = [
     "SimulationRunSummary",
     "ScenarioTemplate",
     "default_templates",
+    "GlobalEvent",
+    "EventTimeline",
+    "EventSnapshot",
 ]

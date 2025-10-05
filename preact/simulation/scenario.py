@@ -10,6 +10,7 @@ import pandas as pd
 
 from .economy import EconomyParameters, Shock
 from .policy import PolicyParameters
+from .events import EventTimeline
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class Scenario:
     simulation_config: "SimulationConfig"
     shock: Optional[Shock] = None
     metadata: Dict[str, object] | None = None
+    events: EventTimeline | None = None
 
     def with_policy(self, policy: PolicyParameters, name: Optional[str] = None) -> "Scenario":
         """Return a clone of the scenario with a different policy."""
@@ -61,6 +63,7 @@ class Scenario:
             simulation_config=self.simulation_config,
             shock=self.shock,
             metadata=dict(self.metadata or {}),
+            events=self.events,
         )
 
 
@@ -76,6 +79,7 @@ class ScenarioBuilder:
         simulation_config: "SimulationConfig",
         *,
         shock: Optional[Shock] = None,
+        events: EventTimeline | None = None,
         seed: int = 42,
     ) -> None:
         self.population_params = population_params
@@ -84,6 +88,7 @@ class ScenarioBuilder:
         self.policy_params = policy_params
         self.simulation_config = simulation_config
         self.shock = shock
+        self.events = events
         self.rng = np.random.default_rng(seed)
         self._population_template = self._create_population()
         self._firms_template = self._create_firms()
@@ -149,6 +154,7 @@ class ScenarioBuilder:
         *,
         policy: Optional[PolicyParameters] = None,
         shock: Optional[Shock] = None,
+        events: Optional[EventTimeline] = None,
         metadata: Optional[Dict[str, object]] = None,
     ) -> Scenario:
         """Return a scenario ready to be consumed by the simulation engine."""
@@ -164,6 +170,7 @@ class ScenarioBuilder:
             simulation_config=self.simulation_config,
             shock=shock or self.shock,
             metadata=metadata or {},
+            events=events or self.events,
         )
 
     def refreshed(self) -> "ScenarioBuilder":
@@ -177,6 +184,7 @@ class ScenarioBuilder:
             policy_params=self.policy_params,
             simulation_config=self.simulation_config,
             shock=self.shock,
+            events=self.events,
             seed=new_seed,
         )
 

@@ -12,6 +12,9 @@ from preact.simulation import (
     SimulationConfig,
     SimulationEngine,
     TaxBracket,
+    PolicyAdjustment,
+    GlobalEvent,
+    EventTimeline,
 )
 
 
@@ -135,3 +138,52 @@ def test_simulation_engine_runs_and_returns_kpis() -> None:
         "gini_pre",
         "gini_post",
     }
+
+
+def test_simulation_engine_handles_global_events() -> None:
+    population_params = _build_population_params(100)
+    policy = _build_policy()
+    economy_params = _build_economy(population_params.size, population_params.income_mean)
+    firm_params = _build_firm_params()
+    config = SimulationConfig(horizon=5)
+
+    event_timeline = EventTimeline(
+        [
+            GlobalEvent(
+                name="Energy Crisis",
+                category="energy",
+                intensity=0.6,
+                start_tick=1,
+                end_tick=3,
+                economic_multiplier=0.8,
+                inflation_pressure=0.12,
+                policy_adjustment=PolicyAdjustment(unemployment_benefit_multiplier=1.5),
+            )
+        ]
+    )
+
+    builder = ScenarioBuilder(
+        population_params=population_params,
+        firm_params=firm_params,
+        economy_params=economy_params,
+        policy_params=policy,
+        simulation_config=config,
+        events=None,
+        seed=77,
+    )
+
+    baseline = builder.build(name="Baseline")
+    with_events = builder.build(name="Eventful", events=event_timeline)
+
+    engine = SimulationEngine(simulation_config=config)
+    baseline_results = engine.run(baseline)
+    event_results = engine.run(with_events)
+
+    assert "active_events" in event_results.timeline.columns
+    assert event_results.timeline["event_economic_intensity"].max() > 0
+    assert any(event_results.timeline["active_events"].str.contains("Energy"))
+    assert (
+        event_results.timeline["transfer_spending"].iloc[-1]
+        > baseline_results.timeline["transfer_spending"].iloc[-1]
+    )
+    assert event_results.timeline["policy_adjustment_multiplier"].max() >= 1.5

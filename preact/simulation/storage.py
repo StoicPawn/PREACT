@@ -60,7 +60,11 @@ class SimulationRepository:
                 consumption_mean DOUBLE,
                 cpi DOUBLE,
                 sentiment DOUBLE,
-                labour_demand_ratio DOUBLE
+                labour_demand_ratio DOUBLE,
+                active_events VARCHAR,
+                event_economic_intensity DOUBLE,
+                event_inflation_delta DOUBLE,
+                policy_adjustment_multiplier DOUBLE
             )
             """
         )
