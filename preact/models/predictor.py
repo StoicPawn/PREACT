@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
+
+import pickle
 
 import pandas as pd
 from sklearn.base import ClassifierMixin
@@ -58,6 +61,10 @@ class PredictiveEngine:
         calibrator.fit(X, y)
         return calibrator
 
+    def _model_path(self, directory: Path, name: str) -> Path:
+        safe_name = name.replace("/", "-").replace(" ", "_")
+        return directory / f"{safe_name}.pkl"
+
     def train(
         self, features: Mapping[str, pd.DataFrame], target: pd.Series
     ) -> Dict[str, ClassifierMixin]:
@@ -68,6 +75,36 @@ class PredictiveEngine:
             calibrated = self._calibrate(base, dataset, aligned_target)
             trained[config.name] = calibrated
         return trained
+
+    def save_models(
+        self, models: Mapping[str, ClassifierMixin], directory: Path
+    ) -> Dict[str, Path]:
+        """Persist trained models to disk."""
+
+        directory.mkdir(parents=True, exist_ok=True)
+        saved_paths: Dict[str, Path] = {}
+        for config in self.configs:
+            model = models[config.name]
+            path = self._model_path(directory, config.name)
+            with path.open("wb") as handle:
+                pickle.dump(model, handle)
+            saved_paths[config.name] = path
+        return saved_paths
+
+    def load_models(self, directory: Path) -> Dict[str, ClassifierMixin]:
+        """Load previously saved models from disk."""
+
+        loaded: Dict[str, ClassifierMixin] = {}
+        for config in self.configs:
+            path = self._model_path(directory, config.name)
+            with path.open("rb") as handle:
+                loaded[config.name] = pickle.load(handle)
+        return loaded
+
+    def has_persisted_models(self, directory: Path) -> bool:
+        """Return ``True`` if all configured models exist on disk."""
+
+        return all(self._model_path(directory, cfg.name).exists() for cfg in self.configs)
 
     def predict(
         self,

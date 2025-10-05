@@ -1,8 +1,12 @@
 """Neural network based predictive engine for PREACT."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
+
+import json
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -31,6 +35,13 @@ class NeuralNetworkEngine:
         self.configs = list(configs)
         self.random_state = random_state
         self.training_history: Dict[str, NeuralTrainingSummary] = {}
+
+    def _model_path(self, directory: Path, name: str) -> Path:
+        safe = name.replace("/", "-").replace(" ", "_")
+        return directory / f"{safe}.pkl"
+
+    def _history_path(self, directory: Path) -> Path:
+        return directory / "training_history.json"
 
     def prepare_dataset(
         self, features: Mapping[str, pd.DataFrame], target: pd.Series
@@ -83,6 +94,49 @@ class NeuralNetworkEngine:
             self.training_history[config.name] = summary
             trained[config.name] = model
         return trained
+
+    def save_models(self, models: Mapping[str, Pipeline], directory: Path) -> Dict[str, Path]:
+        """Persist trained neural models and their diagnostics."""
+
+        directory.mkdir(parents=True, exist_ok=True)
+        saved: Dict[str, Path] = {}
+        for config in self.configs:
+            path = self._model_path(directory, config.name)
+            with path.open("wb") as handle:
+                pickle.dump(models[config.name], handle)
+            saved[config.name] = path
+
+        history_path = self._history_path(directory)
+        serialisable_history = {
+            name: asdict(summary) for name, summary in self.training_history.items()
+        }
+        with history_path.open("w", encoding="utf-8") as handle:
+            json.dump(serialisable_history, handle, indent=2)
+
+        return saved
+
+    def load_models(self, directory: Path) -> Dict[str, Pipeline]:
+        """Load persisted neural network models and training diagnostics."""
+
+        loaded: Dict[str, Pipeline] = {}
+        for config in self.configs:
+            path = self._model_path(directory, config.name)
+            with path.open("rb") as handle:
+                loaded[config.name] = pickle.load(handle)
+
+        history_path = self._history_path(directory)
+        if history_path.exists():
+            with history_path.open("r", encoding="utf-8") as handle:
+                raw_history = json.load(handle)
+            self.training_history = {
+                name: NeuralTrainingSummary(**values) for name, values in raw_history.items()
+            }
+        return loaded
+
+    def has_persisted_models(self, directory: Path) -> bool:
+        """Return ``True`` if persisted models for all configs are present."""
+
+        return all(self._model_path(directory, cfg.name).exists() for cfg in self.configs)
 
     def predict(
         self,
