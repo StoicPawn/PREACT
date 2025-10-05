@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, Tuple
 import altair as alt
 import numpy as np
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
@@ -17,6 +18,9 @@ from preact.config import DataSourceConfig
 from preact.data_ingestion.sources.gdelt import GDELTQuery, GDELTSource
 
 DEFAULT_ENDPOINT = "https://api.gdeltproject.org/api/v2/events"
+HIDDEN_COLUMNS = ["_actor1_country", "_actor2_country", "_event_id"]
+TONE_POSITIVE_THRESHOLD = 1.0
+TONE_NEGATIVE_THRESHOLD = -1.0
 
 
 @st.cache_resource(show_spinner=False)
@@ -154,6 +158,19 @@ def _prepare_table(events: pd.DataFrame) -> pd.DataFrame:
     frame["Sentiment"] = frame["Tone medio"].apply(lambda v: _tone_bucket(v if pd.notna(v) else None))
     frame["Indice Goldstein"] = frame.get("goldstein").round(2)
     frame["Fonte"] = frame.get("source_url").replace({"": pd.NA})
+    frame["_actor1_country"] = (
+        events.get("actor1_country", pd.Series(index=events.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+    )
+    frame["_actor2_country"] = (
+        events.get("actor2_country", pd.Series(index=events.index, dtype="object"))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+    )
+    frame["_event_id"] = events.get("event_id")
 
     preferred = [
         "Data",
@@ -179,7 +196,15 @@ def _filter_table(
 ) -> pd.DataFrame:
     frame = table.copy()
     if countries:
-        frame = frame[frame["Paese"].isin(list(countries))]
+        normalized = [value.upper() for value in countries]
+        actor1 = frame.get("_actor1_country", pd.Series(index=frame.index, dtype="object"))
+        actor2 = frame.get("_actor2_country", pd.Series(index=frame.index, dtype="object"))
+        mask = (
+            frame["Paese"].isin(normalized)
+            | actor1.isin(normalized)
+            | actor2.isin(normalized)
+        )
+        frame = frame[mask]
     if sentiment:
         frame = frame[frame["Sentiment"].isin(list(sentiment))]
     if search:
@@ -198,7 +223,8 @@ def _filter_table(
 
 def _prepare_download(table: pd.DataFrame) -> bytes:
     buffer = io.StringIO()
-    table.to_csv(buffer, index=False)
+    export_table = table.drop(columns=[col for col in table.columns if col in HIDDEN_COLUMNS], errors="ignore")
+    export_table.to_csv(buffer, index=False)
     return buffer.getvalue().encode("utf-8")
 
 
@@ -263,6 +289,154 @@ def _edge_segments(edges: pd.DataFrame, positions: pd.DataFrame) -> pd.DataFrame
             }
         )
     return pd.DataFrame(segments)
+
+
+def _prepare_country_summary(events: pd.DataFrame) -> pd.DataFrame:
+    if events.empty:
+        return pd.DataFrame(
+            columns=[
+                "country",
+                "events",
+                "articles",
+                "avg_tone",
+                "positive",
+                "negative",
+                "latitude",
+                "longitude",
+            ]
+        )
+
+    frame = events.copy()
+    frame["country"] = frame.get("country", pd.Series(dtype="object")).fillna("GLOBAL")
+    frame["tone"] = pd.to_numeric(frame.get("tone"), errors="coerce")
+    frame["num_articles"] = pd.to_numeric(frame.get("num_articles"), errors="coerce").fillna(0)
+    frame["latitude"] = pd.to_numeric(frame.get("latitude"), errors="coerce")
+    frame["longitude"] = pd.to_numeric(frame.get("longitude"), errors="coerce")
+
+    grouped = (
+        frame.groupby("country")
+        .agg(
+            events=("event_id", "nunique"),
+            articles=("num_articles", "sum"),
+            avg_tone=("tone", "mean"),
+            positive=("tone", lambda series: int((series > TONE_POSITIVE_THRESHOLD).sum())),
+            negative=("tone", lambda series: int((series < TONE_NEGATIVE_THRESHOLD).sum())),
+            latitude=("latitude", "mean"),
+            longitude=("longitude", "mean"),
+        )
+        .reset_index()
+    )
+    grouped = grouped.replace({np.inf: np.nan, -np.inf: np.nan})
+    grouped = grouped.dropna(subset=["latitude", "longitude"], how="any")
+    return grouped
+
+
+def _tone_to_color(tone: float | None) -> list[int]:
+    if tone is None or pd.isna(tone):
+        return [180, 180, 180, 180]
+    if tone >= TONE_POSITIVE_THRESHOLD:
+        return [34, 139, 34, 220]
+    if tone <= TONE_NEGATIVE_THRESHOLD:
+        return [220, 53, 69, 220]
+    return [255, 193, 7, 220]
+
+
+def _build_arc_data(
+    edges: pd.DataFrame, summary: pd.DataFrame, focus: str | None
+) -> pd.DataFrame:
+    if edges.empty or summary.empty or not focus:
+        return pd.DataFrame(
+            columns=[
+                "source",
+                "target",
+                "avg_tone",
+                "weight",
+                "events",
+                "source_lat",
+                "source_lon",
+                "target_lat",
+                "target_lon",
+            ]
+        )
+
+    coords = summary.set_index("country")["latitude"].to_frame()
+    coords["longitude"] = summary.set_index("country")["longitude"]
+    focus_edges = edges[(edges["source"] == focus) | (edges["target"] == focus)].copy()
+    if focus_edges.empty:
+        return focus_edges
+
+    focus_edges = focus_edges.join(
+        coords.rename(columns={"latitude": "source_lat", "longitude": "source_lon"}),
+        on="source",
+    ).join(
+        coords.rename(columns={"latitude": "target_lat", "longitude": "target_lon"}),
+        on="target",
+    )
+    focus_edges = focus_edges.dropna(subset=["source_lat", "source_lon", "target_lat", "target_lon"])
+    return focus_edges.reset_index(drop=True)
+
+
+def _render_globe_map(
+    container: DeltaGenerator,
+    summary: pd.DataFrame,
+    arcs: pd.DataFrame,
+    *,
+    focus_country: str | None,
+) -> None:
+    if summary.empty:
+        container.info("Nessun dato geolocalizzato disponibile per i filtri correnti.")
+        return
+
+    display = summary.copy()
+    display["color"] = display["avg_tone"].apply(_tone_to_color)
+    display["radius"] = (
+        display["articles"].fillna(0).astype(float).clip(lower=1.0) * 8000.0
+    )
+    if focus_country and focus_country in display["country"].values:
+        display.loc[display["country"] == focus_country, "radius"] *= 1.4
+
+    layers = [
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=display,
+            get_position="[longitude, latitude]",
+            get_radius="radius",
+            get_fill_color="color",
+            pickable=True,
+            auto_highlight=True,
+        )
+    ]
+
+    if not arcs.empty:
+        arc_data = arcs.copy()
+        arc_data["color"] = arc_data["avg_tone"].apply(_tone_to_color)
+        arc_data["width"] = arc_data.get("weight", 1.0).astype(float).clip(lower=1.0)
+        layers.append(
+            pdk.Layer(
+                "ArcLayer",
+                data=arc_data,
+                get_source_position="[source_lon, source_lat]",
+                get_target_position="[target_lon, target_lat]",
+                get_source_color="color",
+                get_target_color="color",
+                get_width="width",
+                pickable=True,
+            )
+        )
+
+    view_state = pdk.ViewState(
+        latitude=float(display["latitude"].mean()),
+        longitude=float(display["longitude"].mean()),
+        zoom=1.2,
+        min_zoom=1,
+        max_zoom=6,
+    )
+    tooltip = {
+        "html": "<b>{country}</b><br/>Eventi: {events}<br/>Articoli: {articles}<br/>Tone medio: {avg_tone}",
+        "style": {"backgroundColor": "#1f1f1f", "color": "white"},
+    }
+    deck = pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip)
+    container.pydeck_chart(deck, use_container_width=True)
 
 
 def _render_graph(graph: StateGraph) -> None:
@@ -398,11 +572,53 @@ def render_gdelt_module(sidebar: DeltaGenerator) -> None:
 
     table = _prepare_table(events)
 
+    map_container = st.container()
+    with map_container:
+        st.subheader("Mappa delle relazioni globali")
+
+    country_options = (
+        sorted(table["Paese"].dropna().unique().tolist()) if not table.empty else []
+    )
+    selected_country: str | None = None
+    with map_container:
+        if country_options:
+            selector_options = ["Nessun filtro"] + country_options
+            stored_selection = st.session_state.get("gdelt_selected_country")
+            default_index = 0
+            if stored_selection and stored_selection in country_options:
+                default_index = selector_options.index(stored_selection)
+            choice = st.selectbox(
+                "Paese di interesse",
+                options=selector_options,
+                index=default_index,
+                key="gdelt_map_focus",
+            )
+            selected_country = None if choice == "Nessun filtro" else choice
+            if selected_country:
+                st.session_state["gdelt_selected_country"] = selected_country
+            else:
+                st.session_state.pop("gdelt_selected_country", None)
+        else:
+            st.info("Nessun evento disponibile per la mappa.")
+
     st.subheader("Eventi recenti")
     filter_cols = st.columns(3)
-    country_options = sorted(table["Paese"].dropna().unique().tolist()) if not table.empty else []
     sentiment_options = sorted(table["Sentiment"].dropna().unique().tolist()) if not table.empty else []
-    selected_countries = filter_cols[0].multiselect("Filtra per paese", options=country_options)
+    filter_key = "gdelt_country_filter"
+    if filter_key not in st.session_state:
+        st.session_state[filter_key] = []
+    current_countries = [
+        value for value in st.session_state.get(filter_key, []) if value in country_options
+    ]
+    if selected_country and selected_country not in current_countries:
+        current_countries = sorted(set(current_countries + [selected_country]))
+    st.session_state[filter_key] = current_countries
+    selected_countries = filter_cols[0].multiselect(
+        "Filtra per paese",
+        options=country_options,
+        default=current_countries,
+        key=filter_key,
+    )
     selected_sentiment = filter_cols[1].multiselect(
         "Sentiment", options=sentiment_options, default=[]
     )
@@ -425,8 +641,15 @@ def render_gdelt_module(sidebar: DeltaGenerator) -> None:
         tone_range=tone_filter if tone_filter else None,
     )
 
+    filtered_events = (
+        events.loc[filtered_table.index.unique()] if not filtered_table.empty else events.iloc[0:0]
+    )
+    display_table = filtered_table.drop(
+        columns=[col for col in filtered_table.columns if col in HIDDEN_COLUMNS],
+        errors="ignore",
+    )
     st.dataframe(
-        filtered_table,
+        display_table,
         use_container_width=True,
         column_config={
             "Articoli": st.column_config.NumberColumn(format="%d"),
@@ -437,7 +660,7 @@ def render_gdelt_module(sidebar: DeltaGenerator) -> None:
         hide_index=True,
     )
 
-    download_data = _prepare_download(filtered_table)
+    download_data = _prepare_download(display_table)
     st.download_button(
         "Scarica CSV",
         data=download_data,
@@ -446,18 +669,24 @@ def render_gdelt_module(sidebar: DeltaGenerator) -> None:
         use_container_width=False,
     )
 
+    summary = _prepare_country_summary(filtered_events)
+    with map_container:
+        graph_for_map = build_state_graph(
+            filtered_events,
+            weight_column="num_articles",
+            min_events=min_events,
+            min_weight=min_weight,
+            include_self_loops=include_self_loops,
+        )
+        arcs = _build_arc_data(graph_for_map.edges, summary, selected_country)
+        _render_globe_map(map_container, summary, arcs, focus_country=selected_country)
+
     st.subheader("Grafo interazioni fra stati")
-    if events.empty:
+    if filtered_events.empty:
         st.info("Nessun evento disponibile per costruire il grafo con i filtri correnti.")
         return
 
-    graph = build_state_graph(
-        events,
-        weight_column="num_articles",
-        min_events=min_events,
-        min_weight=min_weight,
-        include_self_loops=include_self_loops,
-    )
+    graph = graph_for_map
     _render_graph(graph)
 
     if not graph.nodes.empty:
