@@ -25,11 +25,14 @@ Grazie a modelli di IA avanzati, la simulazione può **evolvere autonomamente**,
 ---
 
 ## Caratteristiche principali
-- **Agenti AI multi-ruolo**: cittadini, imprese, istituzioni con obiettivi e comportamenti differenziati.  
-- **Ambiente modulare**: simulazione di settori specifici o di un’intera società.  
-- **Scenari personalizzabili**: ogni politica può essere parametrizzata e testata in più varianti.  
-- **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.  
-- **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.  
+- **Agenti AI multi-ruolo**: cittadini, imprese, istituzioni con obiettivi e comportamenti differenziati.
+- **Ambiente modulare**: simulazione di settori specifici o di un’intera società.
+- **Scenari personalizzabili**: ogni politica può essere parametrizzata e testata in più varianti.
+- **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.
+- **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.
+
+### Architettura UX/UI
+Per un'anteprima dell'esperienza utente e dell'organizzazione funzionale della piattaforma consulta il documento [Architettura UX/UI di PREACT](docs/ux_architecture.md).
 
 ---
 
