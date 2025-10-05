@@ -1,6 +1,3 @@
-"""Minimal FastAPI-compatible stub used when the dependency is unavailable."""
-from __future__ import annotations
-
 import inspect
 import types
 from typing import Any, Callable, Dict, Mapping
@@ -63,38 +60,60 @@ def Query(default: Any = None, **_: Any) -> Any:  # noqa: N802 - mimic FastAPI s
     return default
 
 
+def _match_path(pattern: str, path: str) -> tuple[bool, Dict[str, str]]:
+    if "{" not in pattern:
+        return (pattern == path, {})
+    pattern_parts = pattern.strip("/").split("/")
+    path_parts = path.strip("/").split("/")
+    if len(pattern_parts) != len(path_parts):
+        return (False, {})
+    params: Dict[str, str] = {}
+    for pattern_part, path_part in zip(pattern_parts, path_parts):
+        if pattern_part.startswith("{") and pattern_part.endswith("}"):
+            params[pattern_part[1:-1]] = path_part
+            continue
+        if pattern_part != path_part:
+            return (False, {})
+    return (True, params)
+
+
 class FastAPI:
     """Minimal FastAPI compatible application container."""
 
     def __init__(self, title: str, version: str) -> None:
         self.title = title
         self.version = version
-        self.routes: Dict[tuple[str, str], Callable[..., Any]] = {}
+        self.routes: list[tuple[str, str, Callable[..., Any]]] = []
         self.state = types.SimpleNamespace()
 
     def get(self, path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            self.routes[("GET", path)] = func
+            self.routes.append(("GET", path, func))
             return func
 
         return decorator
 
     def post(self, path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            self.routes[("POST", path)] = func
+            self.routes.append(("POST", path, func))
             return func
 
         return decorator
 
 
 def _call_route(app: FastAPI, method: str, path: str, payload: Mapping[str, Any] | None) -> _Response:
-    try:
-        handler = app.routes[(method, path)]
-    except KeyError as exc:  # pragma: no cover - defensive guard
-        raise HTTPException(status_code=404, detail="Route not found") from exc
-    kwargs = _prepare_kwargs(handler, payload)
-    result = handler(**kwargs)
-    return _Response(result)
+    for registered_method, registered_path, handler in app.routes:
+        if registered_method != method:
+            continue
+        matched, params = _match_path(registered_path, path)
+        if not matched:
+            continue
+        data = dict(payload or {})
+        data.update(params)
+        kwargs = _prepare_kwargs(handler, data)
+        result = handler(**kwargs)
+        return _Response(result)
+    raise HTTPException(status_code=404, detail="Route not found")
 
 
 class TestClient:

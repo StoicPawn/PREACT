@@ -23,3 +23,14 @@ def install_pydantic_stub() -> None:
     module = types.ModuleType("pydantic")
     module.BaseModel = _BaseModel
     sys.modules["pydantic"] = module
+
+def Field(default=None, **_kwargs):
+    return default
+
+
+def validator(*_fields, **_kwargs):
+    def decorator(func):
+        return func
+
+    return decorator
+
