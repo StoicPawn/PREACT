@@ -225,7 +225,12 @@ def run_mvp_prediction_pipeline(
     )
 
     engine = PredictiveEngine(config.models)
-    models = engine.train(features, target)
+    models_dir = config.storage.models_dir
+    if engine.has_persisted_models(models_dir):
+        models = engine.load_models(models_dir)
+    else:
+        models = engine.train(features, target)
+        engine.save_models(models, models_dir)
     outputs = engine.predict(models, features, target)
 
     predictions = combine_model_outputs(outputs)

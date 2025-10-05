@@ -1,8 +1,7 @@
-"""Feature engineering pipeline for PREACT."""
+"""Utilities for constructing PREACT's feature store."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Dict, Iterable, Mapping
 
 import pandas as pd
@@ -17,6 +16,8 @@ class FeatureStore:
     tables: Dict[str, pd.DataFrame]
 
     def latest(self) -> Dict[str, pd.Series]:
+        """Return the latest observation for each feature table."""
+
         return {name: df.iloc[-1] for name, df in self.tables.items() if not df.empty}
 
 
@@ -133,3 +134,11 @@ def build_feature_store(
             raise ValueError(f"Unsupported feature type: {cfg.name}")
     return combine_features(feature_groups=grouped_features)
 
+
+__all__ = [
+    "FeatureStore",
+    "aggregate_events",
+    "aggregate_humanitarian",
+    "build_feature_store",
+    "combine_features",
+]
