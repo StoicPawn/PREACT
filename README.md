@@ -31,6 +31,21 @@ Grazie a modelli di IA avanzati, la simulazione può **evolvere autonomamente**,
 - **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.
 - **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.
 
+### Moduli MVP
+Il progetto include ora un **motore di simulazione tick-based** allineato alla guida
+_building_map.md_. I componenti principali sono:
+
+- `policy_core`: applica aliquote, detrazioni e sussidi per calcolare redditi netti.
+- `economy_core`: aggiorna occupazione, consumi e indice dei prezzi in base alla domanda.
+- `sentiment_core`: sintetizza il sentiment socio-economico a partire da reddito, lavoro e inflazione.
+- `scenario_builder`: genera popolazione, imprese e shock sintetici con parametri riproducibili.
+- `simulation_engine`: orchestra i moduli core su un orizzonte mensile e produce KPI richiesti
+  (gettito, disoccupazione, Gini, sentiment, winners/losers).
+- `simulation_results`: fornisce utility per confronti A/B, esport e aggregazione dei KPI.
+
+Consulta `preact/simulation/` per maggiori dettagli e `tests/test_simulation.py` per esempi
+di utilizzo end-to-end.
+
 ### Use case principale: sandbox per le politiche pubbliche
 Il focus attuale del progetto è offrire a **ministeri, regioni e municipalità** un ambiente di prova completo per
 la **valutazione di riforme fiscali e pacchetti di welfare** prima della loro introduzione reale. Il workflow

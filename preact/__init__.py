@@ -1,5 +1,7 @@
 """PREACT – Predictive Early-warning for Coups and Atrocities."""
-from .config import PREACTConfig
 
-__all__ = ["PREACTConfig"]
+from .config import PREACTConfig
+from . import simulation
+
+__all__ = ["PREACTConfig", "simulation"]
 
