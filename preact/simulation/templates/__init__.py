@@ -1,13 +1,24 @@
-"""Scenario templates reflecting the MVP blueprint from ``building_map.md``."""
+"""Scenario templates reflecting the MVP blueprint from ``building_map.md``.
+
+This package replaces the previous ``templates.py`` module so that the
+directory structure mirrors the references in the Markdown documentation
+(see ``README.md`` and ``building_map.md``).  The public API is intentionally
+kept identical: importing ``ScenarioTemplate`` or ``default_templates`` from
+``preact.simulation.templates`` continues to work as before while enabling the
+``simulation/templates`` path advertised in the docs.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
-from .economy import EconomyParameters
-from .policy import PolicyParameters, TaxBracket
-from .scenario import FirmParameters, PopulationParameters, ScenarioBuilder
-from .engine import SimulationConfig
+from ..economy import EconomyParameters
+from ..policy import PolicyParameters, TaxBracket
+from ..scenario import FirmParameters, PopulationParameters, ScenarioBuilder
+from ..engine import SimulationConfig
+
+__all__ = ["ScenarioTemplate", "default_templates"]
 
 
 @dataclass(frozen=True)
@@ -215,4 +226,5 @@ def default_templates() -> Mapping[str, ScenarioTemplate]:
             horizon=12,
         ),
     }
+
     return templates
