@@ -1,109 +1,83 @@
-# PREACT – Predictive Early-warning for Coups and Atrocities
+# 🌍 PREACT – Predictive REality for AI-driven Collective Testing
 
-PREACT (Predictive Early-warning for Coups and Atrocities) is a modular, open-source
-platform that ingests multi-domain signals to forecast risks of coups and mass
-atrocities against civilians over short horizons (7–30 days). The project combines
-transparent machine-learning models, Bayesian reasoning, and scenario simulation to
-provide actionable early warning insights for policy makers, governments, and NGOs.
+## Descrizione
+**PREACT** è un progetto innovativo che mira a sviluppare un **sistema di simulazione sociale ed economica** basato su **agenti virtuali controllati da modelli di Intelligenza Artificiale**.  
 
-## System Overview
+L’obiettivo è creare un **“gemello digitale”** della società (città, Paese o comunità) popolato da migliaia di agenti AI che **imitano il comportamento umano** – cittadini, imprese, istituzioni – nelle loro interazioni quotidiane.  
 
-The project is organised into five primary layers:
+Prima di introdurre una politica reale (es. riforma fiscale, legge sul lavoro, nuove tariffe nei trasporti), **PREACT** consente di **sperimentarla virtualmente** e osservare gli effetti su:  
+- livelli di consumo e produzione  
+- distribuzione della ricchezza e disuguaglianze  
+- sentiment e opinioni sociali  
+- effetti a catena imprevisti nel medio-lungo termine  
 
-1. **Data ingestion** – Automatic daily retrieval from open data APIs such as GDELT,
-   ACLED, UNHCR/HDX, and economic indicators. Synthetic fallbacks ensure continuity.
-2. **Feature store** – Harmonises and aggregates indicators (e.g. protest intensity,
-   repression, commodity and FX stress) into time-series features per country.
-3. **Predictive engine** – Ensemble of calibrated gradient boosting models and
-   Bayesian explainability to generate probabilistic risk scores for coups and
-   atrocities on 7–30 day horizons.
-4. **Scoring and validation** – Produces interpretable diagnostics (Brier score,
-   precision/recall) with explicit abstention thresholds when uncertainty is high.
-5. **Output & interface** – Streamlit dashboard, machine-readable exports, and
-   counterfactual scenario simulations for policy interventions.
+Grazie a modelli di IA avanzati, la simulazione può **evolvere autonomamente**, generando scenari non programmati e rivelando dinamiche nascoste, analogamente a come gli algoritmi AI esplorano milioni di possibilità nei giochi complessi.
 
-## Repository Structure
+---
 
-```
-preact/
-├── config.py                 # Shared configuration dataclasses
-├── data_ingestion/           # Connectors for GDELT, ACLED, synthetic sources
-├── feature_store/            # Feature engineering and aggregation logic
-├── models/                   # Predictive engine and backtesting utilities
-├── evaluation/               # Metrics for model diagnostics
-├── scenarios/                # Counterfactual scenario simulation tools
-├── dashboard/                # Streamlit dashboard entry point
-└── utils/                    # Persistence helpers
-scripts/
-└── update_pipeline.py        # CLI for running the daily pipeline
-```
+## Obiettivi
+- Fornire un **ambiente sicuro** per testare politiche prima della loro applicazione reale.  
+- Identificare **conseguenze inattese** e trade-off nascosti nelle decisioni politiche ed economiche.  
+- Creare un framework **scalabile** e adattabile a diversi domini (fisco, welfare, sanità, trasporti, energia).  
+- Offrire uno strumento utile a **policy maker, ricercatori e think tank**.  
+- Contribuire alla **ricerca scientifica in AI, economia computazionale e scienze sociali**.  
 
-## Quick Start
+---
 
-1. **Install dependencies**
+## Caratteristiche principali
+- **Agenti AI multi-ruolo**: cittadini, imprese, istituzioni con obiettivi e comportamenti differenziati.  
+- **Ambiente modulare**: simulazione di settori specifici o di un’intera società.  
+- **Scenari personalizzabili**: ogni politica può essere parametrizzata e testata in più varianti.  
+- **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.  
+- **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.  
 
-   ```bash
-   pip install -e .[dev]
-   ```
+---
 
-2. **Run the synthetic pipeline**
+## Stack tecnologico (proposto)
+- **Python** come linguaggio principale  
+- **Framework multi-agente**: [Mesa](https://mesa.readthedocs.io/) o equivalenti  
+- **Machine Learning / NLP**: PyTorch o TensorFlow per modelli comportamentali  
+- **Database**: PostgreSQL / DuckDB per archiviazione dei dati  
+- **Visualizzazione**: Streamlit / Plotly per dashboard interattive  
+- **Scalabilità**: supporto a esecuzioni distribuite (Kubernetes, Ray)  
 
-   ```bash
-   python scripts/update_pipeline.py --output-dir data
-   ```
+---
 
-   This command fetches the latest open data (or synthetic placeholders), builds the
-   feature store, trains calibrated gradient boosting models, and writes predictions to
-   `data/predictions/`.
+## Estendibilità AI
+Il progetto è pensato per integrare modelli di IA sempre più sofisticati:  
+- **Reinforcement Learning** per esplorare politiche ottimali.  
+- **Large Language Models (LLM)** per simulare conversazioni, opinioni e sentiment realistici degli agenti.  
+- **Digital Twins personalizzati** basati su dati reali (es. World Bank, GDELT, UNHCR).  
+- **Analisi predittiva** per confrontare scenari simulati con dati storici.  
 
-3. **Launch the dashboard**
+---
 
-   ```bash
-   streamlit run preact/dashboard/app.py -- --prediction-dir data/predictions
-   ```
+## Possibili utilizzi
+- **Policy maker**: sperimentare politiche fiscali, sociali o ambientali senza rischi.  
+- **Ricerca accademica**: lavori su *computational social science*, *AI policy simulation*, *economia computazionale*.  
+- **Organizzazioni internazionali**: valutazione di interventi di sviluppo o transizione energetica.  
+- **Think tank e ONG**: analisi di scenari alternativi di governance e cooperazione.  
 
-   The dashboard provides country rankings, model diagnostics, and configurable alert
-   thresholds. Use the sidebar to adjust the alert sensitivity or load validation
-   outcomes for hindcasting studies.
+---
 
-## Data Source Authentication
+## Roadmap
+1. **Fase 1 – Prototipo base**  
+   - Simulazione di un ecosistema cittadino con cittadini, imprese e governo locale.  
+   - Metriche economiche e sociali di base.  
 
-Several upstream providers require authenticated access. Configure the following
-environment variables before running the pipeline:
+2. **Fase 2 – Agenti intelligenti**  
+   - Integrazione di modelli ML/NLP per comportamenti più realistici.  
+   - Introduzione del sentiment sociale e dinamiche di opinione pubblica.  
 
-- `ACLED_USERNAME` and `ACLED_PASSWORD` – credentials used to request an OAuth access
-  token from ACLED. The ingestion connector automatically exchanges them for a bearer
-  token, caches it until expiry, and refreshes it as needed. Optional
-  `ACLED_CLIENT_ID` and `ACLED_CLIENT_SECRET` variables are included in the token
-  request when present.
-- `UNHCR_API_TOKEN` – bearer token for the UNHCR Population API.
-- `HDX_API_TOKEN` – bearer token for the Humanitarian Data Exchange API.
+3. **Fase 3 – Scalabilità**  
+   - Simulazioni a livello nazionale.  
+   - Dashboard interattiva per testare politiche con input personalizzati.  
 
-Tokens are injected as `Authorization` headers when contacting the APIs. If required
-credentials are missing, the connector raises a descriptive error so you can provide
-the appropriate values.
+4. **Fase 4 – Validazione scientifica**  
+   - Confronto dei risultati con dati reali.  
+   - Pubblicazioni accademiche sulla metodologia e sui risultati.  
 
-## Evaluation and Backtesting
+---
 
-- Historical hindcasting on cases such as Niger 2023 (coup), Sudan 2023 (atrocities),
-  and Sri Lanka 2022 (unrest) can be performed using the `rolling_backtest` utility in
-  `preact.models.predictor`.
-- Metrics include Brier score, precision, and recall computed via
-  `preact.evaluation.metrics`.
-
-## Counterfactual Scenarios
-
-The `preact.scenarios.counterfactual` module enables simulation of preventative
-policies by perturbing feature trajectories (e.g. ramping humanitarian aid,
-introducing mediation). Resulting probability deltas help assess potential impact.
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request describing
-your proposed enhancements. All code should include docstrings and unit tests where
-applicable. Use `black`, `isort`, and `mypy` for code quality.
-
-## License
-
-This project is released under the MIT License.
-
+## Licenza
+Da definire (consigliata: **MIT** o **Apache 2.0** per favorire collaborazione e adozione).  
