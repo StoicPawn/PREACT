@@ -11,6 +11,7 @@ from .economy import EconomyCore, EconomyParameters, EconomyState
 from .policy import PolicyCore, PolicyParameters
 from .scenario import Scenario
 from .sentiment import SentimentCore
+from .events import EventTimeline
 
 
 @dataclass(frozen=True)
@@ -77,10 +78,19 @@ class SimulationEngine:
         tax_history = pd.Series(0.0, index=population.index)
         transfer_history = pd.Series(0.0, index=population.index)
 
-        timeline_records: list[dict[str, float]] = []
+        timeline_records: list[dict[str, float | str]] = []
+        events_timeline: EventTimeline | None = scenario.events
 
         for tick in range(config.horizon):
-            fiscal_frame = policy_core.apply(population)
+            event_snapshot = (
+                events_timeline.snapshot(tick, base=scenario.shock)
+                if events_timeline
+                else None
+            )
+            effective_shock = event_snapshot.shock if event_snapshot else scenario.shock
+            adjustment = event_snapshot.adjustment if event_snapshot else None
+
+            fiscal_frame = policy_core.apply(population, adjustment=adjustment)
             consumption = economy_core.compute_consumption(fiscal_frame)
 
             disposable_history = disposable_history.add(fiscal_frame["disposable_income"], fill_value=0.0)
@@ -93,15 +103,23 @@ class SimulationEngine:
                 consumption=consumption,
                 firms=scenario.firms,
                 tick=tick,
-                shock=scenario.shock,
+                shock=effective_shock,
             )
             state = economy_core.update_state(
                 population=population,
                 consumption=consumption,
                 previous_state=state,
                 tick=tick,
-                shock=scenario.shock,
+                shock=effective_shock,
             )
+
+            if event_snapshot and event_snapshot.inflation_delta:
+                state = EconomyState(
+                    cpi=max(40.0, state.cpi * (1 + event_snapshot.inflation_delta)),
+                    unemployment_rate=state.unemployment_rate,
+                    employment_rate=state.employment_rate,
+                    labour_demand_ratio=state.labour_demand_ratio,
+                )
 
             sentiment = sentiment_core.compute(
                 fiscal_frame["disposable_income"],
@@ -111,7 +129,7 @@ class SimulationEngine:
             )
             previous_state = state
 
-            tick_record = {
+            tick_record: dict[str, float | str] = {
                 "tick": tick,
                 "tax_revenue": float(fiscal_frame["tax_liability"].sum()),
                 "transfer_spending": float(fiscal_frame["transfers"].sum()),
@@ -126,6 +144,29 @@ class SimulationEngine:
                 "sentiment": sentiment,
                 "labour_demand_ratio": state.labour_demand_ratio,
             }
+
+            if event_snapshot:
+                tick_record.update(
+                    {
+                        "active_events": ", ".join(event_snapshot.event_names),
+                        "event_economic_intensity": event_snapshot.economic_intensity,
+                        "event_inflation_delta": event_snapshot.inflation_delta,
+                        "policy_adjustment_multiplier": (
+                            event_snapshot.adjustment.unemployment_benefit_multiplier
+                            if event_snapshot.adjustment
+                            else 1.0
+                        ),
+                    }
+                )
+            else:
+                tick_record.update(
+                    {
+                        "active_events": "",
+                        "event_economic_intensity": 0.0,
+                        "event_inflation_delta": 0.0,
+                        "policy_adjustment_multiplier": 1.0,
+                    }
+                )
             timeline_records.append(tick_record)
 
             if progress_callback:
@@ -136,6 +177,8 @@ class SimulationEngine:
                     f"CPI: {tick_record['cpi']:.2f}",
                     f"Sentiment: {tick_record['sentiment']:.2f}",
                 ]
+                if event_snapshot and event_snapshot.event_names:
+                    log_messages.append("Events: " + ", ".join(event_snapshot.event_names))
                 progress_callback(tick, config.horizon, log_messages)
 
         average_disposable = disposable_history / config.horizon

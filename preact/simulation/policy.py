@@ -40,6 +40,40 @@ class PolicyParameters:
         return pd.DataFrame(data)
 
 
+@dataclass(frozen=True)
+class PolicyAdjustment:
+    """Multiplicative and additive adjustments applied during runtime."""
+
+    base_deduction_delta: float = 0.0
+    child_subsidy_multiplier: float = 1.0
+    unemployment_benefit_multiplier: float = 1.0
+
+    def apply(self, parameters: "PolicyParameters") -> "PolicyParameters":
+        """Return adjusted parameters without mutating the originals."""
+
+        adjusted_base = max(0.0, parameters.base_deduction + self.base_deduction_delta)
+        adjusted_child = max(0.0, parameters.child_subsidy * self.child_subsidy_multiplier)
+        adjusted_unemployment = max(
+            0.0, parameters.unemployment_benefit * self.unemployment_benefit_multiplier
+        )
+        return PolicyParameters(
+            tax_brackets=parameters.tax_brackets,
+            base_deduction=adjusted_base,
+            child_subsidy=adjusted_child,
+            unemployment_benefit=adjusted_unemployment,
+        )
+
+    def combine(self, other: "PolicyAdjustment") -> "PolicyAdjustment":
+        """Return a new adjustment representing the composition of two inputs."""
+
+        return PolicyAdjustment(
+            base_deduction_delta=self.base_deduction_delta + other.base_deduction_delta,
+            child_subsidy_multiplier=self.child_subsidy_multiplier * other.child_subsidy_multiplier,
+            unemployment_benefit_multiplier=
+                self.unemployment_benefit_multiplier * other.unemployment_benefit_multiplier,
+        )
+
+
 class PolicyCore:
     """Apply policy parameters to compute net income, tax and transfers."""
 
@@ -68,7 +102,12 @@ class PolicyCore:
             tax_due = tax_due + mask_top * (taxable_income - top_threshold) * top_rate
         return tax_due
 
-    def apply(self, population: pd.DataFrame) -> pd.DataFrame:
+    def apply(
+        self,
+        population: pd.DataFrame,
+        *,
+        adjustment: PolicyAdjustment | None = None,
+    ) -> pd.DataFrame:
         """Return a frame with fiscal metrics for the provided population."""
 
         missing = self.REQUIRED_COLUMNS - set(population.columns)
@@ -77,12 +116,13 @@ class PolicyCore:
 
         frame = population.copy()
         num_children = frame.get("num_children", pd.Series(0, index=frame.index))
-        household_deduction = self.parameters.base_deduction
+        parameters = adjustment.apply(self.parameters) if adjustment else self.parameters
+        household_deduction = parameters.base_deduction
         taxable_income = np.clip(frame["gross_income"] - household_deduction, 0, None)
         tax_due = self._compute_tax(taxable_income.to_numpy())
-        subsidies = num_children.to_numpy() * self.parameters.child_subsidy
+        subsidies = num_children.to_numpy() * parameters.child_subsidy
         unemployment_mask = frame["employment_status"].str.lower().eq("unemployed")
-        unemployment_transfers = unemployment_mask.to_numpy() * self.parameters.unemployment_benefit
+        unemployment_transfers = unemployment_mask.to_numpy() * parameters.unemployment_benefit
         total_transfers = subsidies + unemployment_transfers
         net_income = frame["gross_income"].to_numpy() - tax_due + total_transfers
 

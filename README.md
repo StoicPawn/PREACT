@@ -30,6 +30,9 @@ Grazie a modelli di IA avanzati, la simulazione può **evolvere autonomamente**,
 - **Scenari personalizzabili**: ogni politica può essere parametrizzata e testata in più varianti.
 - **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.
 - **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.
+- **Timeline di eventi globali**: crisi climatiche, shock energetici e flussi migratori possono modificare dinamicamente policy e macro indicatori.
+- **Agenti adattivi**: un `AdaptivePolicyAgent` esplora riforme alternative tramite apprendimento per rinforzo tabellare.
+- **Esecuzione distribuita**: un runner dedicato permette batch di scenari in parallelo con backend thread, process o Ray.
 
 ### Moduli MVP
 Il progetto include ora un **motore di simulazione tick-based** allineato alla guida
@@ -44,6 +47,9 @@ _building_map.md_. I componenti principali sono:
 - `simulation_results`: fornisce utility per confronti A/B, esport e aggregazione dei KPI.
 - `dashboard`: flusso Streamlit **Config → Run → Results** con slider per policy, timeline A/B e pulsanti di download (CSV, Parquet, HTML, PDF).
 - `simulation/templates`: libreria di template territoriali ampliata (città media, area metropolitana, provincia rurale, distretto turistico).
+- `simulation/events`: timeline di eventi globali con combinazione di shock economici e aggiustamenti di policy.
+- `agents/adaptive.py`: agente Q-learning che ottimizza parametri fiscali in base a funzione di reward definibile.
+- `pipeline/distributed.py`: orchestratore per simulazioni parallele con auto-rilevamento del backend disponibile.
 
 Consulta `preact/simulation/` per maggiori dettagli e `tests/test_simulation.py` per esempi
 di utilizzo end-to-end.
