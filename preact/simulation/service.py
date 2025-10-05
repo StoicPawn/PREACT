@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from .economy import Shock
-from .engine import SimulationEngine
+from .engine import SimulationEngine, SimulationProgressCallback
 from .results import SimulationResults, SimulationComparison
 from .policy import PolicyParameters, TaxBracket
 from .storage import SimulationRepository
@@ -65,6 +65,7 @@ class SimulationService:
         shock_payload: Optional[Mapping[str, Any]] = None,
         seed: int = 42,
         metadata: Optional[MutableMapping[str, Any]] = None,
+        progress_callback: SimulationProgressCallback | None = None,
     ) -> SimulationRunSummary:
         """Run a simulation (and optional reform scenario) and persist the results."""
 
@@ -77,7 +78,12 @@ class SimulationService:
             base_metadata.update(metadata)
         shock = self._shock_from_payload(shock_payload)
         base_scenario = builder.build(name=f"{template.name} - Base", policy=base_policy, shock=shock, metadata=base_metadata)
-        base_results = self.engine.run(base_scenario)
+        base_results = self.engine.run(
+            base_scenario,
+            progress_callback=self._wrap_progress_callback(
+                progress_callback, role="Scenario base"
+            ),
+        )
         base_run_id = self.repository.store(base_results)
 
         reform_results: SimulationResults | None = None
@@ -94,7 +100,12 @@ class SimulationService:
                 shock=shock,
                 metadata=reform_metadata,
             )
-            reform_results = self.engine.run(reform_scenario)
+            reform_results = self.engine.run(
+                reform_scenario,
+                progress_callback=self._wrap_progress_callback(
+                    progress_callback, role="Scenario riforma"
+                ),
+            )
             reform_run_id = self.repository.store(reform_results)
 
         comparison = None
@@ -110,6 +121,19 @@ class SimulationService:
             reform_kpis=reform_kpis,
             comparison=comparison,
         )
+
+    @staticmethod
+    def _wrap_progress_callback(
+        callback: SimulationProgressCallback | None, *, role: str
+    ) -> SimulationProgressCallback | None:
+        if not callback:
+            return None
+
+        def _wrapped(tick: int, horizon: int, messages: list[str]) -> None:
+            annotated = [f"{role}: {message}" for message in messages]
+            callback(tick, horizon, annotated)
+
+        return _wrapped
 
     def fetch(self, run_id: str) -> SimulationResults:
         """Retrieve a stored simulation run."""
