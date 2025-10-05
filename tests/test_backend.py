@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pandas as pd
+import pytest
 try:  # pragma: no cover - prefer real FastAPI when available
     from fastapi.testclient import TestClient
 except ModuleNotFoundError:  # pragma: no cover - fallback to stub implementation
@@ -14,6 +15,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to stub implementatio
 
 from preact.backend.app import create_app
 from preact.config import DataSourceConfig
+from preact.simulation.service import SimulationService
+from preact.simulation.storage import SimulationRepository
 from preact.data_ingestion.orchestrator import IngestionArtifacts
 from preact.data_ingestion.sources import GDELTSource, IngestionResult
 
@@ -71,15 +74,17 @@ class DummyOrchestrator:
         return self.artifacts
 
 
-def create_test_client() -> tuple[TestClient, DummyOrchestrator]:
+def create_test_client(tmp_path) -> tuple[TestClient, DummyOrchestrator, SimulationService]:
     orchestrator = DummyOrchestrator()
-    app = create_app(orchestrator=orchestrator)
+    repository = SimulationRepository(tmp_path / "sim.duckdb", export_dir=tmp_path / "exports")
+    service = SimulationService(repository=repository)
+    app = create_app(orchestrator=orchestrator, simulation_service=service)
     client = TestClient(app)
-    return client, orchestrator
+    return client, orchestrator, service
 
 
-def test_health_endpoint_reports_sources() -> None:
-    client, orchestrator = create_test_client()
+def test_health_endpoint_reports_sources(tmp_path) -> None:
+    client, orchestrator, _service = create_test_client(tmp_path)
     response = client.get("/health")
     payload = response.json()
     assert payload["status"] == "ok"
@@ -88,8 +93,8 @@ def test_health_endpoint_reports_sources() -> None:
     assert orchestrator.last_run is None
 
 
-def test_ingest_endpoint_runs_pipeline() -> None:
-    client, orchestrator = create_test_client()
+def test_ingest_endpoint_runs_pipeline(tmp_path) -> None:
+    client, orchestrator, _service = create_test_client(tmp_path)
     response = client.post("/ingest", json={"lookback_days": 10, "persist": True})
     payload = response.json()
     assert payload["status"] == "ok"
@@ -97,8 +102,8 @@ def test_ingest_endpoint_runs_pipeline() -> None:
     assert orchestrator.last_run == {"lookback_days": 10, "end": None, "persist": True}
 
 
-def test_gdelt_events_endpoint_filters() -> None:
-    client, orchestrator = create_test_client()
+def test_gdelt_events_endpoint_filters(tmp_path) -> None:
+    client, orchestrator, _service = create_test_client(tmp_path)
     response = client.get("/gdelt/events", params={"country": "ita", "limit": 5})
     payload = response.json()
     assert payload["events"][0]["country"] == "ITA"
@@ -108,3 +113,33 @@ def test_gdelt_events_endpoint_filters() -> None:
     assert orchestrator.recent_args["limit"] == 5
     query = orchestrator.recent_args["query"]
     assert query is not None and query.countries[0].lower() == "ita"
+
+def test_simulation_run_and_results_endpoint(tmp_path) -> None:
+    client, _orchestrator, _service = create_test_client(tmp_path)
+    scenarios_resp = client.get("/simulation/scenarios")
+    scenarios_payload = scenarios_resp.json()
+    assert scenarios_payload["scenarios"]
+    template_name = scenarios_payload["scenarios"][0]["name"]
+
+    run_payload = {
+        "template": template_name,
+        "horizon": 4,
+        "policy": {
+            "brackets": [{"threshold": 30000, "rate": 0.2}],
+            "base_deduction": 4500,
+            "child_subsidy": 180.0,
+            "unemployment_benefit": 950.0,
+        },
+    }
+    run_resp = client.post("/simulation/run", json=run_payload)
+    run_data = run_resp.json()
+    assert run_data["base_run_id"]
+    assert run_data["reform_run_id"]
+    assert run_data["comparison"] is not None
+
+    results_resp = client.get(f"/simulation/results/{run_data['base_run_id']}")
+    assert results_resp.status_code == 200
+    results_payload = results_resp.json()
+    assert results_payload["kpis"]["tax_revenue"] >= 0
+    assert results_payload["timeline"]
+

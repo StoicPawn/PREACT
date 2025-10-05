@@ -17,6 +17,9 @@ from .scenario import (
     FirmParameters,
 )
 from .results import SimulationResults, SimulationComparison
+from .storage import SimulationRepository
+from .service import SimulationService, SimulationRunSummary
+from .templates import ScenarioTemplate, default_templates
 
 __all__ = [
     "SimulationEngine",
@@ -36,4 +39,9 @@ __all__ = [
     "FirmParameters",
     "SimulationResults",
     "SimulationComparison",
+    "SimulationRepository",
+    "SimulationService",
+    "SimulationRunSummary",
+    "ScenarioTemplate",
+    "default_templates",
 ]
