@@ -2,7 +2,7 @@
 from .acled import ACLEDSource
 from .base import DataSource, HTTPJSONSource, IngestionResult
 from .economic import EconomicIndicatorSource
-from .gdelt import GDELTSource
+from .gdelt import GDELTQuery, GDELTSource
 from .hdx import HDXSource
 from .registry import SOURCE_REGISTRY, build_sources, fetch_all
 from .unhcr import UNHCRSource
@@ -11,6 +11,7 @@ __all__ = [
     "ACLEDSource",
     "DataSource",
     "EconomicIndicatorSource",
+    "GDELTQuery",
     "GDELTSource",
     "HDXSource",
     "HTTPJSONSource",
