@@ -31,6 +31,23 @@ Grazie a modelli di IA avanzati, la simulazione può **evolvere autonomamente**,
 - **Analisi automatica**: metriche di benessere, equità, sentiment sociale e stabilità economica.
 - **Scalabilità cloud**: dalla simulazione di una città fino a interi Paesi.
 
+### Use case principale: sandbox per le politiche pubbliche
+Il focus attuale del progetto è offrire a **ministeri, regioni e municipalità** un ambiente di prova completo per
+la **valutazione di riforme fiscali e pacchetti di welfare** prima della loro introduzione reale. Il workflow
+tipico prevede:
+
+1. **Definizione della riforma**: l’utente configura tasse, trasferimenti e incentivi con il *Policy Builder*.
+2. **Calibrazione della popolazione sintetica**: si replica la struttura socio-economica del territorio target
+   importando dati reali e definendo comportamenti specifici per cittadini, imprese e PA.
+3. **Esecuzione di scenari multipli**: la riforma viene confrontata con status quo e alternative tramite batch di
+   simulazioni parametriche.
+4. **Analisi multidimensionale**: dashboard e report automatici evidenziano impatti su gettito, equità,
+   competitività, sentiment sociale e stabilità macroeconomica.
+5. **Supporto alla decisione**: il sistema produce raccomandazioni, controfattuali e spiegazioni trasparenti per
+   i decisori, documentando rischi e trade-off.
+
+Questo use case guida le priorità di sviluppo di PREACT in termini di moduli, metriche e requisiti di governance.
+
 ### Architettura UX/UI
 Per un'anteprima dell'esperienza utente e dell'organizzazione funzionale della piattaforma consulta il documento [Architettura UX/UI di PREACT](docs/ux_architecture.md).
 
