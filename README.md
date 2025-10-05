@@ -42,6 +42,8 @@ _building_map.md_. I componenti principali sono:
 - `simulation_engine`: orchestra i moduli core su un orizzonte mensile e produce KPI richiesti
   (gettito, disoccupazione, Gini, sentiment, winners/losers).
 - `simulation_results`: fornisce utility per confronti A/B, esport e aggregazione dei KPI.
+- `dashboard`: flusso Streamlit **Config → Run → Results** con slider per policy, timeline A/B e pulsanti di download (CSV, Parquet, HTML, PDF).
+- `simulation/templates`: libreria di template territoriali ampliata (città media, area metropolitana, provincia rurale, distretto turistico).
 
 Consulta `preact/simulation/` per maggiori dettagli e `tests/test_simulation.py` per esempi
 di utilizzo end-to-end.

@@ -64,6 +64,12 @@ def test_repository_store_and_fetch(tmp_path) -> None:
     assert exports["timeline"].exists()
     assert exports["agent_metrics"].exists()
 
+    html_report = repository.export(run_id, format="html")
+    assert html_report["report"].exists()
+
+    pdf_report = repository.export(run_id, format="pdf")
+    assert pdf_report["report"].exists()
+
 
 def test_simulation_service_runs_and_compares(tmp_path) -> None:
     repository = SimulationRepository(tmp_path / "service.duckdb", export_dir=tmp_path / "exports")
@@ -82,3 +88,10 @@ def test_simulation_service_runs_and_compares(tmp_path) -> None:
     assert summary.comparison is not None
     base_results = repository.fetch(summary.base_run_id)
     assert base_results.timeline.shape[0] == 3
+
+    report_with_comparison = repository.export(
+        summary.base_run_id,
+        format="html",
+        reform_run_id=summary.reform_run_id,
+    )
+    assert report_with_comparison["report"].exists()

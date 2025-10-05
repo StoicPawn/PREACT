@@ -157,28 +157,60 @@ class SimulationRepository:
         ).df()
         return frame
 
-    def export(self, run_id: str, *, format: str = "parquet") -> Dict[str, Path]:
-        """Export timeline and agent metrics to the requested file format."""
+    def export(
+        self,
+        run_id: str,
+        *,
+        format: str = "parquet",
+        reform_run_id: str | None = None,
+    ) -> Dict[str, Path]:
+        """Export results in the requested format.
 
-        allowed = {"csv", "parquet"}
+        ``csv`` and ``parquet`` return the raw timeline/agent metrics, while
+        ``html``/``pdf`` produce an analytical report. When exporting a
+        comparison report, pass both ``run_id`` (base) and ``reform_run_id``.
+        """
+
+        allowed = {"csv", "parquet", "html", "pdf"}
         if format not in allowed:
             raise ValueError(f"Unsupported export format: {format}")
 
         results = self.fetch(run_id)
         paths: Dict[str, Path] = {}
 
-        timeline_path = self.export_dir / f"{run_id}_timeline.{format}"
-        agents_path = self.export_dir / f"{run_id}_agents.{format}"
+        if format in {"csv", "parquet"}:
+            timeline_path = self.export_dir / f"{run_id}_timeline.{format}"
+            agents_path = self.export_dir / f"{run_id}_agents.{format}"
 
-        if format == "csv":
-            results.timeline.to_csv(timeline_path, index=False)
-            results.agent_metrics.to_csv(agents_path, index=False)
+            if format == "csv":
+                results.timeline.to_csv(timeline_path, index=False)
+                results.agent_metrics.to_csv(agents_path, index=False)
+            else:
+                results.timeline.to_parquet(timeline_path, index=False)
+                results.agent_metrics.to_parquet(agents_path, index=False)
+
+            paths["timeline"] = timeline_path
+            paths["agent_metrics"] = agents_path
+            return paths
+
+        from .reporting import build_html_report, build_pdf_report
+        from .results import SimulationComparison
+
+        reform_results = self.fetch(reform_run_id) if reform_run_id else None
+        comparison = (
+            SimulationComparison(base=results, reform=reform_results)
+            if reform_results is not None
+            else None
+        )
+
+        report_path = self.export_dir / f"{run_id}_report.{format}"
+        if format == "html":
+            html = build_html_report(results, reform_results, comparison)
+            report_path.write_text(html, encoding="utf-8")
         else:
-            results.timeline.to_parquet(timeline_path, index=False)
-            results.agent_metrics.to_parquet(agents_path, index=False)
+            build_pdf_report(report_path, results, reform_results, comparison)
 
-        paths["timeline"] = timeline_path
-        paths["agent_metrics"] = agents_path
+        paths["report"] = report_path
         return paths
 
     @staticmethod

@@ -1,188 +1,200 @@
-"""Reusable layout primitives for the PREACT Streamlit dashboard."""
+"""Reusable layout helpers for the fiscal MVP dashboard."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Mapping, Sequence
 
 import pandas as pd
 import streamlit as st
 
-
-@dataclass
-class AlertSummary:
-    country: str
-    probability: float
-    trend: float
-    sparkline: Iterable[float]
-
-    @property
-    def direction(self) -> str:
-        if self.trend > 0.02:
-            return "increasing"
-        if self.trend < -0.02:
-            return "decreasing"
-        return "stable"
+from preact.simulation.results import SimulationComparison, SimulationResults
 
 
-def predictions_to_frame(predictions: Dict[str, pd.Series]) -> pd.DataFrame:
-    """Combine a dict of series into a unified dataframe for plotting."""
+def render_policy_controls(
+    *,
+    label: str,
+    policy,
+    key_prefix: str,
+    initial: Mapping[str, object] | None = None,
+) -> Dict[str, object]:
+    """Render sliders for a policy configuration and return the payload."""
 
-    frame = pd.DataFrame({name: series for name, series in predictions.items()})
-    frame.index.name = "date"
-    return frame
+    st.subheader(label)
+    initial_brackets = list(initial.get("brackets", [])) if initial else []
+    bracket_payload: list[Dict[str, float]] = []
 
-
-def compute_alert_summaries(predictions: Dict[str, pd.Series], window: int = 7) -> list[AlertSummary]:
-    summaries: list[AlertSummary] = []
-    for country, series in predictions.items():
-        tail = series.tail(window)
-        trend = float(tail.iloc[-1] - tail.iloc[0]) if len(tail) >= 2 else 0.0
-        summaries.append(
-            AlertSummary(
-                country=country,
-                probability=float(series.iloc[-1]),
-                trend=trend,
-                sparkline=series.tail(20).tolist(),
-            )
+    columns = st.columns(max(len(policy.tax_brackets), 1))
+    for index, bracket in enumerate(policy.tax_brackets):
+        default_rate = float(bracket.rate)
+        if index < len(initial_brackets):
+            default_rate = float(initial_brackets[index].get("rate", default_rate))
+        column = columns[index % len(columns)]
+        rate = column.slider(
+            f"Aliquota su soglia €{int(bracket.threshold):,}".replace(",", "."),
+            min_value=0.0,
+            max_value=0.6,
+            value=default_rate,
+            step=0.01,
+            key=f"{key_prefix}_bracket_{index}",
         )
-    summaries.sort(key=lambda alert: alert.probability, reverse=True)
-    return summaries
+        bracket_payload.append({"threshold": float(bracket.threshold), "rate": float(rate)})
 
-
-def render_header(predictions: Dict[str, pd.Series]) -> None:
-    latest = {name: float(series.iloc[-1]) for name, series in predictions.items()}
-    highest_country = max(latest, key=latest.get)
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Countries monitored", len(predictions))
-    col2.metric("Highest alert probability", f"{latest[highest_country]*100:.1f}%", highest_country)
-
-    combined = predictions_to_frame(predictions)
-    rolling = combined.rolling(window=7).mean().iloc[-1].mean()
-    col3.metric("7-day rolling mean", f"{rolling*100:.1f}%")
-
-
-def render_alert_overview(predictions: Dict[str, pd.Series], threshold: float) -> None:
-    st.subheader("Alert overview")
-    summaries = compute_alert_summaries(predictions)
-    alerts_df = pd.DataFrame(
-        [
-            {
-                "Country": summary.country,
-                "Probability": summary.probability,
-                "Trend (Δ)": summary.trend,
-                "Status": summary.direction,
-            }
-            for summary in summaries
-        ]
-    )
-    alerts_df["Probability"] = alerts_df["Probability"].map(lambda value: f"{value*100:.1f}%")
-    alerts_df["Trend (Δ)"] = alerts_df["Trend (Δ)"].map(lambda value: f"{value*100:.1f}%")
-    alerts_df["Status"] = alerts_df["Status"].str.title()
-
-    st.dataframe(alerts_df, width="stretch", hide_index=True)
-
-    chart_data = predictions_to_frame(predictions)
-    highlighted = chart_data[[summary.country for summary in summaries[:5]]]
-    st.area_chart(highlighted, width="stretch")
-
-    st.caption(
-        f"Threshold set at {threshold*100:.0f}%. Alerts above this line require immediate review."
+    base_default = float(initial.get("base_deduction", policy.base_deduction)) if initial else float(policy.base_deduction)
+    child_default = float(initial.get("child_subsidy", policy.child_subsidy)) if initial else float(policy.child_subsidy)
+    unemployment_default = (
+        float(initial.get("unemployment_benefit", policy.unemployment_benefit))
+        if initial
+        else float(policy.unemployment_benefit)
     )
 
-
-def render_country_detail(predictions: Dict[str, pd.Series], default_country: str | None = None) -> None:
-    st.subheader("Country deep dive")
-    countries = sorted(predictions.keys())
-    default = default_country or countries[0]
-    country = st.selectbox("Select a country", options=countries, index=countries.index(default))
-    series = predictions[country]
-
-    cols = st.columns(2)
-    cols[0].metric("Latest probability", f"{series.iloc[-1]*100:.1f}%")
-    change = float(series.iloc[-1] - series.iloc[-8]) if len(series) > 7 else float(series.iloc[-1] - series.iloc[0])
-    cols[1].metric("7-day change", f"{change*100:.1f}%")
-
-    st.line_chart(series, width="stretch")
-
-    st.markdown(
-        """
-        **Interpretation guidance**
-
-        - Probabilities are model-derived and represent the chance of crisis escalation.
-        - Sudden increases signal the need for analyst review and potential response planning.
-        - Combine this signal with qualitative field reports before acting.
-        """
+    base_deduction = st.slider(
+        "Detrazione base per nucleo",
+        min_value=0.0,
+        max_value=12000.0,
+        value=base_default,
+        step=100.0,
+        key=f"{key_prefix}_deduction",
+    )
+    child_subsidy = st.slider(
+        "Sussidio mensile per figlio",
+        min_value=0.0,
+        max_value=400.0,
+        value=child_default,
+        step=10.0,
+        key=f"{key_prefix}_child_subsidy",
+    )
+    unemployment_benefit = st.slider(
+        "Sussidio disoccupazione",
+        min_value=0.0,
+        max_value=1800.0,
+        value=unemployment_default,
+        step=50.0,
+        key=f"{key_prefix}_unemployment",
     )
 
+    return {
+        "brackets": bracket_payload,
+        "base_deduction": float(base_deduction),
+        "child_subsidy": float(child_subsidy),
+        "unemployment_benefit": float(unemployment_benefit),
+    }
 
-def render_diagnostics(
-    predictions: Dict[str, pd.Series], outcomes: pd.Series | None, threshold: float, summary
+
+def render_kpi_grid(base_kpis: Mapping[str, float], comparison: Mapping[str, float] | None = None) -> None:
+    """Display KPI cards for base (and optional delta vs reform)."""
+
+    cards: Sequence[tuple[str, str]] = (
+        ("tax_revenue", "Gettito fiscale"),
+        ("budget_balance", "Saldo PA"),
+        ("unemployment_rate", "Tasso disoccupazione"),
+        ("employment_rate", "Tasso occupazione"),
+        ("sentiment", "Sentiment medio"),
+        ("gini_post", "Indice di Gini"),
+    )
+    rows = [cards[i : i + 3] for i in range(0, len(cards), 3)]
+    for row in rows:
+        cols = st.columns(len(row))
+        for column, (key, label) in zip(cols, row):
+            base_value = base_kpis.get(key)
+            if base_value is None:
+                continue
+            delta = None
+            if comparison is not None and key in comparison:
+                delta = comparison[key]
+            column.metric(label, f"{base_value:,.2f}".replace(",", "."), delta=f"{delta:+.2f}" if delta is not None else None)
+
+
+def render_timeline(metric: str, base: SimulationResults, reform: SimulationResults | None = None) -> None:
+    """Render a timeline chart comparing base and reform."""
+
+    label = metric.replace("_", " ").title()
+    chart_data = pd.DataFrame({"Tick": base.timeline["tick"], "Base": base.timeline[metric]})
+    if reform is not None:
+        chart_data["Reform"] = reform.timeline[metric]
+    chart_data = chart_data.set_index("Tick")
+    st.line_chart(chart_data, height=260)
+    st.caption(f"Serie temporale per {label} su orizzonte simulazione.")
+
+
+def render_winners_section(base: SimulationResults, reform: SimulationResults | None = None) -> None:
+    """Display winners/losers tables for the selected scenarios."""
+
+    st.subheader("Winners & losers")
+    base_winners = base.winners_losers()
+    base_winners = base_winners.rename(columns={"mean_delta": "Δ reddito", "count": "Numero agenti"})
+    st.dataframe(base_winners, hide_index=True, use_container_width=True)
+
+    if reform is not None:
+        reform_winners = reform.winners_losers().rename(
+            columns={"mean_delta": "Δ reddito", "count": "Numero agenti"}
+        )
+        st.dataframe(reform_winners, hide_index=True, use_container_width=True)
+
+
+def render_downloads(
+    summary,
+    repository,
+    *,
+    enable_reform: bool,
 ) -> None:
-    st.subheader("Model diagnostics")
-    if outcomes is None:
-        st.info("Upload observed outcomes to unlock precision and recall diagnostics.")
-        return
+    """Expose download buttons for CSV/Parquet/HTML/PDF exports."""
 
-    st.dataframe(summary, width="stretch")
+    st.subheader("Export")
+    base_run = summary.base_run_id
+    reform_run = summary.reform_run_id if enable_reform else None
 
-    comparison = pd.DataFrame(
-        {
-            "Probability": {country: float(series.iloc[-1]) for country, series in predictions.items()},
-            "Observed": outcomes.astype(float),
-        }
-    )
-    st.bar_chart(comparison, width="stretch")
+    csv_paths = repository.export(base_run, format="csv")
+    parquet_paths = repository.export(base_run, format="parquet")
+    html_report = repository.export(base_run, format="html", reform_run_id=reform_run)
+    pdf_report = repository.export(base_run, format="pdf", reform_run_id=reform_run)
 
-    st.caption(
-        "The chart contrasts the latest model probabilities with observed outcomes to help calibrate the threshold."
-        f" Current alert threshold: {threshold*100:.0f}%."
-    )
+    col1, col2 = st.columns(2)
+    with col1:
+        for label, path in ("Timeline CSV", csv_paths["timeline"]), ("Agent CSV", csv_paths["agent_metrics"]):
+            with open(path, "rb") as handle:
+                st.download_button(label=f"Scarica {label}", data=handle.read(), file_name=path.name, mime="text/csv")
+        for label, path in ("Timeline Parquet", parquet_paths["timeline"]), (
+            "Agent Parquet",
+            parquet_paths["agent_metrics"],
+        ):
+            with open(path, "rb") as handle:
+                st.download_button(
+                    label=f"Scarica {label}",
+                    data=handle.read(),
+                    file_name=path.name,
+                    mime="application/octet-stream",
+                )
+    with col2:
+        with open(html_report["report"], "rb") as handle:
+            st.download_button(
+                label="Report HTML",
+                data=handle.read(),
+                file_name=html_report["report"].name,
+                mime="text/html",
+            )
+        with open(pdf_report["report"], "rb") as handle:
+            st.download_button(
+                label="Report PDF",
+                data=handle.read(),
+                file_name=pdf_report["report"].name,
+                mime="application/pdf",
+            )
 
 
-def render_evidence(evidence: pd.DataFrame | None) -> None:
-    st.subheader("Evidence feed")
-    if evidence is None or evidence.empty:
-        st.info("No Bayesian evidence available yet. Once generated it will appear here with signal strength cues.")
-        return
+def comparison_payload(base: SimulationResults, reform: SimulationResults | None) -> Mapping[str, float] | None:
+    """Return a delta dictionary if the reform scenario is available."""
 
-    st.dataframe(evidence, width="stretch")
-
-
-def render_dashboard(
-    predictions: Dict[str, pd.Series],
-    threshold: float,
-    outcomes: pd.Series | None = None,
-    summary: pd.DataFrame | None = None,
-    evidence: pd.DataFrame | None = None,
-) -> None:
-    render_header(predictions)
-    overview_tab, country_tab, diagnostics_tab, evidence_tab = st.tabs(
-        ["Overview", "Country detail", "Diagnostics", "Evidence"]
-    )
-
-    with overview_tab:
-        render_alert_overview(predictions, threshold)
-
-    with country_tab:
-        highest_country = max(predictions, key=lambda key: predictions[key].iloc[-1])
-        render_country_detail(predictions, default_country=highest_country)
-
-    with diagnostics_tab:
-        if summary is not None:
-            render_diagnostics(predictions, outcomes, threshold, summary)
-        else:
-            render_diagnostics(predictions, None, threshold, summary)
-
-    with evidence_tab:
-        render_evidence(evidence)
+    if reform is None:
+        return None
+    return SimulationComparison(base=base, reform=reform).delta()
 
 
 __all__ = [
-    "render_dashboard",
-    "render_alert_overview",
-    "render_country_detail",
-    "render_diagnostics",
-    "render_evidence",
+    "render_policy_controls",
+    "render_kpi_grid",
+    "render_timeline",
+    "render_winners_section",
+    "render_downloads",
+    "comparison_payload",
 ]
 

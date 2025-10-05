@@ -57,9 +57,11 @@ Consentire a un utente **non tecnico** (policy analyst) di:
   - istogrammi per decili,
   - tabella winners/losers,
   - 2 grafici *Scenario vs Base* side-by-side.
+  - ✓ Implementato in `preact/dashboard/app.py` con flusso Config → Run → Results, slider policy e timeline A/B.
 - **Export:**
   - CSV/Parquet dei risultati,
   - Report HTML/PDF auto-generato (titolo, setup, grafici, takeaway, caveat).
+  - ✓ Report prodotti da `SimulationRepository.export(..., format="html"/"pdf")` con `preact/simulation/reporting.py`.
 
 ---
 
@@ -157,7 +159,8 @@ Consentire a un utente **non tecnico** (policy analyst) di:
 2. Implementare regole policy/economia base.  
 3. Runner + storage (FastAPI `/run`, DuckDB, Parquet).  
 4. Dashboard MVP (Streamlit: Config → Run → Results + export).  
-5. Template & demo (3 policy template + dataset seed; script `make demo`).  
+5. Template & demo (3 policy template + dataset seed; script `make demo`).
+   - ✓ Libreria template ampliata (`preact/simulation/templates.py`) con città media, regione metropolitana, provincia rurale e hub turistico.
 6. User test (task “trova winners/losers”; feedback; fix).  
 
 ---

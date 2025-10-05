@@ -1,102 +1,205 @@
-"""Streamlit dashboard for the PREACT early warning system."""
+"""Streamlit dashboard delivering the Config → Run → Results fiscal workflow."""
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
-
-import pandas as pd
-import streamlit as st
+from typing import Any, Dict
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = PACKAGE_ROOT.parent
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from preact.evaluation.metrics import summary_table
-from preact.dashboard.layout import render_dashboard
-from preact.dashboard.sample_data import (
-    generate_sample_evidence,
-    generate_sample_outcomes,
-    generate_sample_predictions,
+import streamlit as st
+
+from preact.simulation import SimulationRepository, SimulationService, default_templates
+
+from preact.dashboard.layout import (
+    comparison_payload,
+    render_downloads,
+    render_kpi_grid,
+    render_policy_controls,
+    render_timeline,
+    render_winners_section,
 )
 
-st.set_page_config(page_title="PREACT Early Warning", layout="wide")
-st.title("PREACT – Global Early Warning Dashboard")
+st.set_page_config(page_title="PREACT – Fiscal Sandbox", layout="wide")
+st.title("PREACT – Fiscal policy sandbox")
 
 
-def load_predictions(path: Path) -> Dict[str, pd.Series]:
-    """Load stored predictions from parquet files."""
-
-    predictions: Dict[str, pd.Series] = {}
-    for file in path.glob("*.parquet"):
-        frame = pd.read_parquet(file)
-        series = frame["probability"]
-        if "country" in frame.columns:
-            name = str(frame["country"].iloc[0])
-        else:
-            name = file.stem.replace("_", " ").title()
-        predictions[name] = series
-    return predictions
+def _init_service() -> SimulationService:
+    if "simulation_service" not in st.session_state:
+        storage_root = PROJECT_ROOT / "data"
+        storage_root.mkdir(parents=True, exist_ok=True)
+        repository = SimulationRepository(
+            storage_root / "dashboard_runs.duckdb",
+            export_dir=storage_root / "exports",
+        )
+        st.session_state["simulation_repository"] = repository
+        st.session_state["simulation_service"] = SimulationService(repository=repository)
+    return st.session_state["simulation_service"]
 
 
-def load_bayesian_evidence(path: Path) -> pd.DataFrame | None:
-    evidence_file = path / "bayesian_evidence.json"
-    if not evidence_file.exists():
-        return None
-    frame = pd.read_json(evidence_file)
-    if frame.empty:
-        return None
-    return frame
+def _get_repository() -> SimulationRepository:
+    service = _init_service()
+    return st.session_state["simulation_repository"]
 
 
-def prepare_predictions(path: Path) -> Tuple[Dict[str, pd.Series], bool]:
-    """Load predictions or provide a deterministic sample fallback."""
-
-    predictions = load_predictions(path)
-    if predictions:
-        return predictions, False
-
-    sample_predictions = generate_sample_predictions()
-    return sample_predictions, True
+def _config_state() -> Dict[str, Any]:
+    if "config" not in st.session_state:
+        st.session_state["config"] = {}
+    return st.session_state["config"]
 
 
-def main(prediction_dir: str, outcomes_path: str | None = None) -> None:
-    st.sidebar.header("Data inputs")
-    prediction_path = Path(prediction_dir)
-    predictions, using_sample = prepare_predictions(prediction_path)
+service = _init_service()
+repository = _get_repository()
+templates = {template.name: template for template in default_templates().values()}
+state = _config_state()
 
-    if using_sample:
-        st.sidebar.warning(
-            "Nessun file di previsione trovato. Mostriamo dati di esempio per l'MVP."
+config_tab, run_tab, results_tab = st.tabs(["Config", "Run", "Results"])
+
+
+with config_tab:
+    st.markdown(
+        """
+        Configura lo scenario di riferimento, seleziona un template e calibra i parametri
+        fiscali tramite slider. Al salvataggio la configurazione viene resa disponibile
+        nella scheda "Run".
+        """
+    )
+
+    default_template_name = state.get("template", "Medium City")
+
+    with st.form("scenario_config"):
+        template_name = st.selectbox(
+            "Template territoriale",
+            options=list(templates.keys()),
+            index=list(templates.keys()).index(default_template_name)
+            if default_template_name in templates
+            else 0,
+        )
+        template = templates[template_name]
+        st.caption(template.description)
+
+        horizon = st.slider(
+            "Orizzonte simulazione (mesi)",
+            min_value=6,
+            max_value=36,
+            value=int(state.get("horizon", template.horizon)),
+            step=1,
+        )
+        seed = st.number_input(
+            "Seed riproducibilità",
+            min_value=1,
+            max_value=9999,
+            value=int(state.get("seed", 42)),
         )
 
-    threshold = st.sidebar.slider("Alert threshold", min_value=0.1, max_value=0.9, value=0.65)
+        base_policy_defaults = state.get("base_policy") if state else None
+        base_policy_payload = render_policy_controls(
+            label="Scenario base",
+            policy=template.policy,
+            key_prefix="base",
+            initial=base_policy_defaults,
+        )
 
-    outcomes: pd.Series | None = None
-    diagnostics: pd.DataFrame | None = None
-    evidence = load_bayesian_evidence(prediction_path)
+        enable_reform = st.checkbox(
+            "Configura scenario di riforma",
+            value=bool(state.get("reform_enabled", True)),
+        )
 
-    if outcomes_path and Path(outcomes_path).exists():
-        outcomes = pd.read_parquet(outcomes_path)["outcome"]
-    elif using_sample:
-        outcomes = generate_sample_outcomes(predictions)
+        reform_policy_payload = None
+        if enable_reform:
+            reform_policy_defaults = state.get("reform_policy") if state else None
+            reform_policy_payload = render_policy_controls(
+                label="Scenario riforma",
+                policy=template.policy,
+                key_prefix="reform",
+                initial=reform_policy_defaults,
+            )
 
-    if outcomes is not None:
-        diagnostics = summary_table(predictions, outcomes, threshold)
+        submitted = st.form_submit_button("Salva configurazione", type="primary")
+        if submitted:
+            state.update(
+                {
+                    "template": template_name,
+                    "horizon": horizon,
+                    "seed": seed,
+                    "base_policy": base_policy_payload,
+                    "reform_policy": reform_policy_payload,
+                    "reform_enabled": enable_reform,
+                }
+            )
+            st.success("Configurazione aggiornata. Procedi alla scheda 'Run'.")
 
-    if using_sample and (evidence is None or evidence.empty):
-        evidence = generate_sample_evidence(predictions)
 
-    render_dashboard(
-        predictions=predictions,
-        threshold=threshold,
-        outcomes=outcomes,
-        summary=diagnostics,
-        evidence=evidence,
+with run_tab:
+    st.markdown(
+        """
+        Lancia l'esecuzione del motore di simulazione. Verranno generati automaticamente
+        lo scenario base e, se configurato, quello di riforma.
+        """
     )
+
+    if not state:
+        st.info("Configura uno scenario nella scheda precedente per abilitare il run.")
+    else:
+        st.write(
+            "**Template selezionato:**",
+            state.get("template", "Non definito"),
+            "– orizzonte",
+            state.get("horizon", "?"),
+            "mesi",
+        )
+
+        if st.button("Esegui simulazione", type="primary"):
+            with st.spinner("Esecuzione in corso..."):
+                summary = service.run(
+                    template_name=state["template"],
+                    horizon=int(state["horizon"]),
+                    seed=int(state.get("seed", 42)),
+                    base_policy_payload=state.get("base_policy"),
+                    policy_payload=state.get("reform_policy") if state.get("reform_enabled") else None,
+                    metadata={"source": "streamlit"},
+                )
+            st.session_state["last_summary"] = summary
+            st.success("Simulazione completata. Consulta i risultati nella scheda dedicata.")
+
+
+with results_tab:
+    st.markdown(
+        """
+        Analizza KPI, timeline A/B e scarica i report finali. Seleziona nuovamente la
+        scheda "Config" per modificare le impostazioni e rilanciare la simulazione.
+        """
+    )
+
+    summary = st.session_state.get("last_summary")
+    if not summary:
+        st.info("Nessuna esecuzione disponibile. Avvia una simulazione dalla scheda 'Run'.")
+    else:
+        base_results = service.fetch(summary.base_run_id)
+        reform_results = (
+            service.fetch(summary.reform_run_id) if summary.reform_run_id else None
+        )
+        comparison = comparison_payload(base_results, reform_results)
+
+        render_kpi_grid(base_results.kpis(), comparison)
+
+        timeline_col1, timeline_col2, timeline_col3 = st.columns(3)
+        with timeline_col1:
+            render_timeline("tax_revenue", base_results, reform_results)
+        with timeline_col2:
+            render_timeline("budget_balance", base_results, reform_results)
+        with timeline_col3:
+            render_timeline("sentiment", base_results, reform_results)
+
+        render_winners_section(base_results, reform_results)
+
+        render_downloads(summary, repository, enable_reform=bool(reform_results))
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point
-    main(prediction_dir="data/predictions")
-
+    _init_service()
