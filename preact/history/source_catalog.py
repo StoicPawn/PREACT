@@ -259,6 +259,122 @@ SOURCES: tuple[SourceSpec, ...] = (
         "event_time_native", "high", "https://www.gdacs.org/",
         notes="Free API; attribution requested."
     ),
+    SourceSpec(
+        "bis", "Bank for International Settlements Statistics",
+        ("banking", "credit", "debt", "exchange_rates", "property_prices"),
+        "dataset-dependent", "periodic", "open", "snapshot_required", "core",
+        "https://stats.bis.org/",
+        notes="Official public SDMX REST API for BIS statistical data and metadata."
+    ),
+    SourceSpec(
+        "ilostat", "ILOSTAT", ("labour", "employment", "wages", "working_conditions"),
+        "country/indicator-dependent", "periodic", "open", "snapshot_required", "core",
+        "https://ilostat.ilo.org/data/bulk/",
+        notes="Programmatic bulk CSV by indicator and reference area with dictionaries/metadata."
+    ),
+    SourceSpec(
+        "unesco_uis", "UNESCO Institute for Statistics",
+        ("education", "science", "culture", "demography"),
+        "indicator-dependent", "periodic", "open", "snapshot_required", "high",
+        "https://databrowser.uis.unesco.org/resources",
+        notes="Official API plus bulk CSV releases."
+    ),
+    SourceSpec(
+        "pax", "PA-X Peace Agreements Database", ("peace_agreements", "ceasefires", "transitions"),
+        "1990-present", "versioned releases", "open", "native_vintages", "core",
+        "https://www.peaceagreements.org/downloads/",
+        notes="Versioned CSV/Excel datasets and corpus; archives of previous releases support replay."
+    ),
+    SourceSpec(
+        "prio_grid", "PRIO-GRID", ("spatial_panel", "socioeconomic", "environment", "conflict_covariates"),
+        "1946-2014 (v2.0)", "release-based", "open", "native_vintages", "high",
+        "https://www.prio.org/data/9",
+        notes="Global 0.5-degree cell-year structure; useful as a historical spatial backbone but current release is old."
+    ),
+    SourceSpec(
+        "fred_alfred", "FRED / ALFRED", ("macro", "finance", "realtime_vintages"),
+        "series-dependent", "source-dependent", "open", "native_vintages", "high",
+        "https://fred.stlouisfed.org/docs/api/fred/alfred.html",
+        notes="ALFRED explicitly preserves real-time periods showing what values were known before later revisions."
+    ),
+    SourceSpec(
+        "eia", "U.S. Energy Information Administration Open Data",
+        ("energy", "oil", "gas", "electricity", "emissions"),
+        "series-dependent; many series from 1960s", "monthly/annual/real-time",
+        "free_registration", "snapshot_required", "high",
+        "https://www.eia.gov/opendata/",
+        notes="Free API key for API access; bulk files do not require a key."
+    ),
+    SourceSpec(
+        "wid", "World Inequality Database", ("income", "wealth", "inequality"),
+        "country/series-dependent; some very long-run series", "research updates",
+        "open", "snapshot_required", "high", "https://wid.world/data/",
+        notes="Direct dataset downloads plus replication packages/methodology."
+    ),
+    SourceSpec(
+        "wvs", "World Values Survey", ("public_opinion", "values", "institutions", "society"),
+        "1981-present", "wave-based", "noncommercial", "native_vintages", "high",
+        "https://www.worldvaluessurvey.org/",
+        licence_note="Free registration; non-profit use and no redistribution of data files."
+    ),
+    SourceSpec(
+        "ipums_international", "IPUMS International", ("census_microdata", "demography", "households"),
+        "mainly 1960-present plus historical censuses", "release-based",
+        "research_request", "native_vintages", "specialist",
+        "https://international.ipums.org/international/",
+        licence_note="Free to qualified researchers; scholarly/educational use, individual registration, no redistribution."
+    ),
+    SourceSpec(
+        "dhs", "The DHS Program", ("health", "demography", "households", "geospatial_surveys"),
+        "survey/country-dependent", "survey releases", "free_registration",
+        "native_vintages", "specialist", "https://www.dhsprogram.com/data/",
+        licence_note="Survey microdata are distributed at no cost for legitimate academic research after registration/approval."
+    ),
+    SourceSpec(
+        "openalex", "OpenAlex", ("scholarly_literature", "citations", "institutions", "topics"),
+        "multi-century bibliographic coverage", "API/live; public snapshot quarterly",
+        "open", "native_vintages", "core", "https://openalex.org/",
+        licence_note="Metadata is released under CC0; full-text works retain their own licences.",
+        notes="Free public complete snapshot plus API; ideal for historiography and research-evidence graph."
+    ),
+    SourceSpec(
+        "crossref", "Crossref", ("scholarly_metadata", "citations", "retractions", "funding"),
+        "publisher-dependent", "continuous", "open", "snapshot_required", "high",
+        "https://api.crossref.org/",
+        notes="Public REST API requires no signup; bibliographic metadata is broadly reusable."
+    ),
+    SourceSpec(
+        "aiddata", "AidData", ("development_finance", "aid", "geospatial_development"),
+        "dataset-dependent; core releases include 1947 onward", "release-based",
+        "open", "native_vintages", "high", "https://www.aiddata.org/datasets",
+        notes="Project-level and geocoded development-finance datasets plus free GeoQuery aggregation."
+    ),
+    SourceSpec(
+        "geonames", "GeoNames", ("gazetteer", "place_names", "geocoding", "entity_resolution"),
+        "current gazetteer with daily exports", "daily", "open", "snapshot_required", "core",
+        "https://www.geonames.org/export/",
+        licence_note="CC BY; free downloadable global gazetteer and web services."
+    ),
+    SourceSpec(
+        "wikidata", "Wikidata", ("knowledge_graph", "entity_resolution", "biographical", "historical_context"),
+        "multi-period knowledge graph", "continuous", "open", "snapshot_required", "high",
+        "https://www.wikidata.org/wiki/Wikidata:Data_access",
+        licence_note="Wikidata data is CC0; linked media/content may carry separate licences.",
+        notes="Use for entity linking and crosswalk support, not as an authoritative primary historical source."
+    ),
+    SourceSpec(
+        "osm_full_history", "OpenStreetMap Full History", ("geospatial", "infrastructure", "map_history"),
+        "mostly October 2007-present", "weekly full-history dump", "open",
+        "native_vintages", "specialist", "https://planet.openstreetmap.org/planet/full-history/",
+        notes="Full-history dumps contain successive versions of OSM objects; very large and best used selectively."
+    ),
+    SourceSpec(
+        "gtd", "Global Terrorism Database", ("terrorism", "political_violence"),
+        "historical", "release-based", "noncommercial", "native_vintages", "specialist",
+        "https://www.start.umd.edu/gtd/",
+        licence_note="Use is licensed for non-commercial research/analysis; redistribution is restricted."
+    ),
+
 )
 
 
