@@ -1,0 +1,265 @@
+"""Reviewed source registry for PREACT historical/geopolitical ingestion.
+
+The registry is deliberately descriptive: access and licence constraints are part of the
+data model so connectors cannot silently treat "publicly visible" as "freely redistributable".
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+AccessClass = Literal[
+    "open",
+    "free_registration",
+    "noncommercial",
+    "mixed_rights",
+    "research_request",
+]
+ReplayPolicy = Literal[
+    "native_vintages",
+    "snapshot_required",
+    "event_time_native",
+    "publication_release",
+]
+Priority = Literal["core", "high", "specialist"]
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    source_id: str
+    name: str
+    domains: tuple[str, ...]
+    temporal_coverage: str
+    update_cadence: str
+    access: AccessClass
+    replay_policy: ReplayPolicy
+    priority: Priority
+    url: str
+    licence_note: str = ""
+    notes: str = ""
+
+
+SOURCES: tuple[SourceSpec, ...] = (
+    SourceSpec(
+        "gdelt", "GDELT", ("news_events", "media"), "1979-present",
+        "15 minutes", "open", "event_time_native", "core",
+        "https://www.gdeltproject.org/",
+        notes="Global event/news-derived signals; keep raw daily/15-minute files and source URLs."
+    ),
+    SourceSpec(
+        "mediacloud", "Media Cloud", ("media", "news_archive"), "source-dependent",
+        "continuous", "open", "snapshot_required", "high",
+        "https://www.mediacloud.org/",
+        notes="Large online-news archive; coverage begins when a source entered its collection."
+    ),
+    SourceSpec(
+        "commoncrawl", "Common Crawl", ("web_archive", "media"), "2008-present",
+        "periodic crawls", "open", "native_vintages", "high",
+        "https://commoncrawl.org/",
+        licence_note="Crawl access is open; underlying page copyright remains source-specific."
+    ),
+    SourceSpec(
+        "guardian_open_platform", "Guardian Open Platform", ("media",), "1999-present",
+        "continuous", "noncommercial", "snapshot_required", "specialist",
+        "https://open-platform.theguardian.com/",
+        licence_note="Free developer access is for non-commercial use; commercial/text-mining use has separate terms."
+    ),
+    SourceSpec(
+        "chronicling_america", "Library of Congress Chronicling America",
+        ("historical_press",), "historic US newspapers", "archive", "open",
+        "native_vintages", "high", "https://www.loc.gov/collections/chronicling-america/",
+        notes="Public API/datasets; OCR and page-level resources."
+    ),
+    SourceSpec(
+        "europeana_newspapers", "Europeana Newspapers",
+        ("historical_press", "cultural_heritage"), "1618-1996 collection coverage",
+        "archive", "mixed_rights", "native_vintages", "high",
+        "https://www.europeana.eu/",
+        licence_note="Metadata/API access is open; item reuse rights vary by provider/object."
+    ),
+    SourceSpec(
+        "gallica", "BnF Gallica", ("historical_press", "books"), "historical",
+        "archive", "mixed_rights", "native_vintages", "high",
+        "https://gallica.bnf.fr/",
+        notes="Provides APIs including OCR extraction in ALTO XML."
+    ),
+    SourceSpec(
+        "delpher", "Delpher", ("historical_press",), "1618-1995 newspapers",
+        "archive", "mixed_rights", "native_vintages", "high",
+        "https://www.delpher.nl/",
+        licence_note="Open bulk OCR is available for public-domain newspaper archive through 1879; later material has reuse constraints."
+    ),
+    SourceSpec(
+        "trove", "National Library of Australia Trove", ("historical_press", "archives"),
+        "historical", "archive", "free_registration", "native_vintages", "high",
+        "https://trove.nla.gov.au/",
+        notes="API supports newspapers/gazettes and other cultural collections."
+    ),
+    SourceSpec(
+        "ucdp", "Uppsala Conflict Data Program", ("conflict", "violence"),
+        "1946-present; georeferenced events 1989-present", "monthly/yearly",
+        "open", "native_vintages", "core", "https://ucdp.uu.se/",
+        notes="REST API plus versioned annual and candidate-event releases."
+    ),
+    SourceSpec(
+        "acled", "ACLED", ("conflict", "protest", "political_violence"),
+        "country-dependent, 1997-present at longest", "near-real-time",
+        "free_registration", "snapshot_required", "core", "https://acleddata.com/",
+        licence_note="Account/authentication and ACLED EULA/attribution requirements apply."
+    ),
+    SourceSpec(
+        "cow", "Correlates of War", ("war", "alliances", "diplomacy", "trade", "capabilities", "borders"),
+        "mostly 1816 onward", "versioned releases", "open", "native_vintages",
+        "core", "https://correlatesofwar.org/data-sets/",
+        notes="Use sub-datasets separately: wars, MIDs, alliances, NMC, diplomatic exchange, trade, IGO, contiguity, territorial change."
+    ),
+    SourceSpec(
+        "vdem", "V-Dem", ("institutions", "democracy", "civil_society", "political_parties"),
+        "many units 1789-present", "annual", "free_registration", "native_vintages",
+        "core", "https://v-dem.net/data/",
+        notes="Version archive is especially valuable for point-in-time replay."
+    ),
+    SourceSpec(
+        "qog", "Quality of Government Institute", ("governance", "institutions", "country_panel"),
+        "1946-present in standard TS", "annual", "noncommercial", "native_vintages",
+        "high", "https://www.gu.se/en/quality-government/qog-data",
+        licence_note="Free academic/non-commercial use; redistribution/commercial use restricted."
+    ),
+    SourceSpec(
+        "world_bank", "World Bank Indicators API", ("macro", "development", "debt", "demography"),
+        "many series 50+ years", "source-dependent", "open", "snapshot_required",
+        "core", "https://api.worldbank.org/v2/",
+        notes="No API key; revisions mean raw retrieval vintages must be stored."
+    ),
+    SourceSpec(
+        "imf", "IMF Data", ("macro", "fiscal", "balance_of_payments", "financial"),
+        "dataset-dependent", "dataset-dependent", "free_registration",
+        "snapshot_required", "high", "https://data.imf.org/",
+        notes="SDMX APIs; current portal may require an account for API exploration."
+    ),
+    SourceSpec(
+        "oecd", "OECD Data Explorer", ("macro", "social", "trade", "institutions"),
+        "dataset-dependent", "dataset-dependent", "open", "snapshot_required",
+        "high", "https://data-explorer.oecd.org/",
+        notes="Free SDMX API with rate limiting."
+    ),
+    SourceSpec(
+        "eurostat", "Eurostat", ("macro", "social", "demography", "trade"),
+        "dataset-dependent", "twice daily when updated", "open", "snapshot_required",
+        "high", "https://ec.europa.eu/eurostat/",
+        notes="API exposes latest dataset versions; source explicitly notes lack of historical versioning."
+    ),
+    SourceSpec(
+        "un_comtrade", "UN Comtrade", ("trade",), "long-run, dataset-dependent",
+        "monthly/annual", "free_registration", "snapshot_required", "core",
+        "https://comtradeplus.un.org/",
+        notes="Free account/API tier supports substantial programmatic access."
+    ),
+    SourceSpec(
+        "unhcr", "UNHCR Refugee Data Finder", ("migration", "refugees", "humanitarian"),
+        "historical to present", "annual/periodic", "open", "snapshot_required",
+        "core", "https://www.unhcr.org/refugee-statistics/",
+        notes="Open JSON API, no special credentials."
+    ),
+    SourceSpec(
+        "un_wpp", "UN World Population Prospects", ("demography",),
+        "1950-present estimates; projections to 2100", "revision releases",
+        "open", "native_vintages", "core", "https://population.un.org/wpp/",
+        notes="Bulk CSV and open API; keep revision identifier."
+    ),
+    SourceSpec(
+        "faostat", "FAOSTAT", ("food", "agriculture", "land", "prices"),
+        "1961-present", "periodic", "open", "snapshot_required", "high",
+        "https://www.fao.org/faostat/",
+        notes="Global country coverage and official API developer portal."
+    ),
+    SourceSpec(
+        "who_gho", "WHO Global Health Observatory", ("health", "mortality", "disease"),
+        "indicator-dependent", "periodic", "open", "snapshot_required", "high",
+        "https://www.who.int/data/gho",
+        notes="WHO estimates are revised; use the current World Health Data Hub interface when available."
+    ),
+    SourceSpec(
+        "maddison", "Maddison Project Database", ("historical_macro", "population"),
+        "1 AD-2022 for parts of dataset", "release-based", "open",
+        "native_vintages", "core",
+        "https://www.rug.nl/ggdc/historicaldevelopment/maddison/",
+        licence_note="MPD 2023 is CC BY 4.0 with citation requirements."
+    ),
+    SourceSpec(
+        "pwt", "Penn World Table", ("macro", "productivity", "capital", "labour"),
+        "1950-2023", "release-based", "open", "native_vintages", "high",
+        "https://www.rug.nl/ggdc/productivity/pwt/",
+    ),
+    SourceSpec(
+        "clio_infra", "Clio Infra", ("historical_demography", "historical_economy", "institutions"),
+        "often 1500 onward; variable-dependent", "archive/research updates",
+        "open", "native_vintages", "high", "https://clio-infra.eu/",
+    ),
+    SourceSpec(
+        "seshat", "Seshat Global History Databank", ("deep_history", "institutions", "social_complexity"),
+        "deep historical; polity/variable-dependent", "snapshot/releases/API",
+        "open", "native_vintages", "high", "https://seshatdatabank.info/data",
+        notes="Replication datasets, periodic snapshots and API."
+    ),
+    SourceSpec(
+        "sipri", "SIPRI Databases", ("military_spending", "arms_transfers", "embargoes", "peace_operations"),
+        "military spending 1949-present; arms transfers 1950-present",
+        "annual/periodic", "open", "publication_release", "core",
+        "https://www.sipri.org/databases",
+        notes="Historical values can be revised; archive every published edition used."
+    ),
+    SourceSpec(
+        "epr", "Ethnic Power Relations", ("ethnicity", "political_power"),
+        "1946-2021", "release-based", "open", "native_vintages", "high",
+        "https://icr.ethz.ch/data/epr/core/",
+    ),
+    SourceSpec(
+        "cshapes", "CShapes 2.0", ("historical_boundaries", "capitals", "geospatial"),
+        "1886-2019; Europe from 1816", "release-based", "noncommercial",
+        "native_vintages", "core", "https://icr.ethz.ch/data/cshapes/",
+        licence_note="Dataset reuse is CC BY-NC-SA 4.0."
+    ),
+    SourceSpec(
+        "powell_thyne_coups", "Powell & Thyne Coup Dataset", ("coups", "leadership_change"),
+        "1950-present", "irregular updates", "open", "native_vintages", "high",
+        "https://jonathanmpowell.com/coups/",
+        notes="Current and archived published versions are available."
+    ),
+    SourceSpec(
+        "idea_turnout", "International IDEA Voter Turnout Database", ("elections", "participation"),
+        "1945-present", "event-driven", "open", "snapshot_required", "high",
+        "https://www.idea.int/data-tools/data/voter-turnout-database",
+    ),
+    SourceSpec(
+        "kof_globalisation", "KOF Globalisation Index", ("globalisation", "economic_links", "political_links"),
+        "1970s-present", "annual", "open", "native_vintages", "high",
+        "https://kof.ethz.ch/en/forecasts-and-indicators/indicators/kof-globalisation-index.html",
+    ),
+    SourceSpec(
+        "era5", "Copernicus ERA5", ("climate", "weather"),
+        "1940-present", "continuous/reanalysis", "open", "snapshot_required",
+        "core", "https://cds.climate.copernicus.eu/",
+        licence_note="ERA5 catalogue states CC BY 4.0.",
+    ),
+    SourceSpec(
+        "ibtracs", "NOAA IBTrACS", ("tropical_cyclones", "natural_hazards"),
+        "1840s-present", "annual/agency updates", "open", "native_vintages",
+        "high", "https://www.ncei.noaa.gov/products/international-best-track-archive",
+    ),
+    SourceSpec(
+        "usgs_earthquakes", "USGS Earthquake Catalog", ("earthquakes", "natural_hazards"),
+        "catalog-dependent; long historical coverage", "real-time", "open",
+        "event_time_native", "high", "https://earthquake.usgs.gov/fdsnws/event/1/",
+    ),
+    SourceSpec(
+        "gdacs", "Global Disaster Alert and Coordination System", ("disasters", "hazards"),
+        "recent/historical API coverage", "near-real-time", "open",
+        "event_time_native", "high", "https://www.gdacs.org/",
+        notes="Free API; attribution requested."
+    ),
+)
+
+
+SOURCE_BY_ID = {source.source_id: source for source in SOURCES}
