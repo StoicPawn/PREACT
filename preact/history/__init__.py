@@ -8,11 +8,12 @@ from .replay import (
     ReplaySpec,
     evaluate_binary_forecasts,
 )
-from .schema import EvidenceClass, HistoricalQuery, Provenance, TemporalRecord
+from .schema import EvidenceClass, HistoricalQuery, KnowledgeMode, Provenance, TemporalRecord
 from .snapshot_store import SnapshotMetadata, SourceSnapshotStore
 
 __all__ = [
     "EvidenceClass",
+    "KnowledgeMode",
     "HistoricalQuery",
     "Provenance",
     "TemporalRecord",
