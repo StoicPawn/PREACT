@@ -46,6 +46,7 @@ def gdelt_event_records(
     *,
     acquired_at: datetime,
     snapshot_checksum: str | None = None,
+    fips_to_iso3: Mapping[str, str] | None = None,
 ) -> list[TemporalRecord]:
     """Convert GDELT Event rows into bitemporal evidence.
 
@@ -68,6 +69,8 @@ def gdelt_event_records(
             or row.get("Actor2CountryCode")
             or "GLOBAL"
         ).strip().upper() or "GLOBAL"
+        iso3 = (fips_to_iso3 or {}).get(country)
+        entity_id = f"iso3:{iso3}" if iso3 else f"gdelt_fips:{country}"
         event_id = _event_id(row)
         source_url = str(row.get("SOURCEURL") or "").strip()
 
@@ -90,7 +93,7 @@ def gdelt_event_records(
         output.append(
             TemporalRecord(
                 record_id=event_id,
-                entity_id=f"gdelt_country:{country}",
+                entity_id=entity_id,
                 variable="gdelt_event",
                 value=value,
                 valid_from=valid_from,
@@ -107,6 +110,8 @@ def gdelt_event_records(
                     "snapshot_checksum": snapshot_checksum,
                     "source_url": source_url,
                     "provider_country_code": country,
+                    "provider_country_code_scheme": "FIPS10-4",
+                    "normalized_iso3": iso3,
                 },
             )
         )
