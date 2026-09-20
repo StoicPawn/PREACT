@@ -21,6 +21,10 @@ from preact.models.benchmark_suite import (
     run_benchmark_suite,
 )
 from preact.models.ensemble import sequential_oos_ensemble
+from preact.models.ablation import DEFAULT_FAMILIES, run_family_ablation
+from preact.models.placebo import run_placebo_benchmark
+from preact.models.sliced_evaluation import temporal_slice_metrics
+from preact.models.stress_tests import run_unseen_entity_stress
 from preact.models.experiment_manifest import build_manifest
 from preact.models.research_governance import evaluate_research_promotion
 
@@ -76,6 +80,9 @@ def main() -> None:
     parser.add_argument("--test-dates-per-fold", type=int, default=5)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
     parser.add_argument("--output-dir", default="data/experiments/predictive")
+    parser.add_argument("--skip-geographic-stress", action="store_true")
+    parser.add_argument("--skip-placebo", action="store_true")
+    parser.add_argument("--run-ablations", action="store_true")
     args = parser.parse_args()
 
     history = HistoricalWarehouse(args.history_db)
@@ -147,6 +154,93 @@ def main() -> None:
         for name, benchmark in benchmarks.items()
     }
 
+    geographic_stress = None
+    if not args.skip_geographic_stress:
+        try:
+            split, stress_suite = run_unseen_entity_stress(
+                features,
+                dataset.target,
+                horizon_days=args.horizon_days,
+                min_train_dates=args.min_train_dates,
+                calibration_dates=args.calibration_dates,
+                test_dates_per_fold=args.test_dates_per_fold,
+                bootstrap_samples=max(100, args.bootstrap_samples // 2),
+            )
+            geographic_stress = {
+                "train_entities": list(split.train_entities),
+                "test_entities": list(split.test_entities),
+                "models": {
+                    name: {
+                        "metrics": asdict(model.metrics),
+                        "brier_skill_interval": asdict(model.brier_skill_interval),
+                    }
+                    for name, model in stress_suite.models.items()
+                },
+            }
+        except (ValueError, TypeError) as exc:
+            geographic_stress = {"status": "not_run", "reason": str(exc)}
+
+    placebo = None
+    if not args.skip_placebo:
+        placebo_result = run_placebo_benchmark(
+            features,
+            dataset.target,
+            horizon_days=args.horizon_days,
+            min_train_dates=args.min_train_dates,
+            calibration_dates=args.calibration_dates,
+            test_dates_per_fold=args.test_dates_per_fold,
+            bootstrap_samples=max(100, args.bootstrap_samples // 4),
+        )
+        placebo = {
+            "max_brier_skill": placebo_result.max_brier_skill,
+            "models": {
+                name: {
+                    "metrics": asdict(model.metrics),
+                    "brier_skill_interval": asdict(model.brier_skill_interval),
+                }
+                for name, model in placebo_result.benchmark.models.items()
+            },
+        }
+
+    ablations = {}
+    if args.run_ablations:
+        for family_name, prefixes in DEFAULT_FAMILIES.items():
+            if not any(
+                any(str(column).startswith(prefix) for prefix in prefixes)
+                for column in features.columns
+            ):
+                continue
+            try:
+                result = run_family_ablation(
+                    features,
+                    dataset.target,
+                    family_name=family_name,
+                    prefixes=prefixes,
+                    horizon_days=args.horizon_days,
+                    min_train_dates=args.min_train_dates,
+                    calibration_dates=args.calibration_dates,
+                    test_dates_per_fold=args.test_dates_per_fold,
+                    bootstrap_samples=max(100, args.bootstrap_samples // 4),
+                )
+            except ValueError as exc:
+                ablations[family_name] = {"status": "not_run", "reason": str(exc)}
+                continue
+            ablations[family_name] = {
+                "removed_columns": list(result.removed_columns),
+                "models": {
+                    name: {
+                        "metrics": asdict(model.metrics),
+                        "brier_skill_interval": asdict(model.brier_skill_interval),
+                    }
+                    for name, model in result.benchmark.models.items()
+                },
+            }
+
+    stability = {
+        name: [asdict(item) for item in temporal_slice_metrics(benchmark.predictions)]
+        for name, benchmark in benchmarks.items()
+    }
+
     manifest = build_manifest(
         features,
         dataset.target,
@@ -188,6 +282,10 @@ def main() -> None:
         "ensemble_fold_weights": {
             str(k): dict(v) for k, v in ensemble.fold_weights.items()
         },
+        "temporal_stability": stability,
+        "geographic_stress": geographic_stress,
+        "placebo": placebo,
+        "ablations": ablations,
     }
     (output / "report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str),
@@ -215,6 +313,16 @@ def main() -> None:
                 }
                 for name, benchmark in benchmarks.items()
             },
+            "placebo_max_brier_skill": (
+                placebo.get("max_brier_skill")
+                if isinstance(placebo, dict)
+                else None
+            ),
+            "geographic_stress_status": (
+                geographic_stress.get("status", "completed")
+                if isinstance(geographic_stress, dict)
+                else "skipped"
+            ),
         },
         indent=2,
         default=str,
