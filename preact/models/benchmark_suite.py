@@ -40,6 +40,21 @@ class SkillInterval:
     upper: float | None
     samples: int
 
+    @property
+    def width(self) -> float | None:
+        if self.lower is None or self.upper is None:
+            return None
+        return float(self.upper - self.lower)
+
+
+@dataclass(frozen=True)
+class DependenceDiagnostic:
+    """Compare dependence-aware uncertainty with an IID date bootstrap."""
+
+    block: SkillInterval
+    iid: SkillInterval
+    width_ratio: float | None
+
 
 @dataclass(frozen=True)
 class ModelBenchmark:
@@ -109,23 +124,12 @@ def evaluate_prediction_frame(df: pd.DataFrame) -> BenchmarkMetrics:
     return BenchmarkMetrics(rows=int(len(df)), events=int(y.sum()), brier=brier, hierarchical_baseline_brier=base_brier, brier_skill=skill, log_loss=float(log_loss(y, p, labels=[0, 1])), roc_auc=float(roc_auc_score(y, p)) if y.nunique() > 1 else None, average_precision=float(average_precision_score(y, p)) if y.nunique() > 1 else None, calibration_gap=float(p.mean() - y.mean()), worst_fold_brier_skill=float(min(fold_skills)) if fold_skills else None)
 
 
-def block_bootstrap_brier_skill(predictions: pd.DataFrame, *, samples: int = 1000, seed: int = 42, block_length: int | None = None) -> SkillInterval:
-    """Brier-skill interval using moving blocks of forecast dates.
-
-    All entities on a sampled date stay together and adjacent forecast dates are
-    resampled as contiguous blocks. This avoids the anti-conservative IID date
-    bootstrap when forecast errors are serially dependent.
-    """
-    if predictions.empty or samples < 1:
-        return SkillInterval(None, None, None, 0)
-    dates = pd.DatetimeIndex(pd.to_datetime(predictions["date"].unique())).sort_values()
-    if len(dates) < 2:
-        return SkillInterval(None, None, None, 0)
-    values = []
+def _skill_interval_from_date_draws(predictions: pd.DataFrame, draws, *, samples: int) -> SkillInterval:
     normalized = predictions.copy()
     normalized["date"] = pd.to_datetime(normalized["date"])
     by_date = {pd.Timestamp(date): frame for date, frame in normalized.groupby("date")}
-    for drawn in moving_block_date_samples(dates, samples=samples, seed=seed, block_length=block_length):
+    values: list[float] = []
+    for drawn in draws:
         sample = pd.concat([by_date[pd.Timestamp(date)] for date in drawn], ignore_index=True)
         model_brier = float(brier_score_loss(sample["actual"], sample["probability"]))
         base_brier = float(brier_score_loss(sample["actual"], sample["baseline_probability"]))
@@ -134,7 +138,40 @@ def block_bootstrap_brier_skill(predictions: pd.DataFrame, *, samples: int = 100
     if not values:
         return SkillInterval(None, None, None, 0)
     q = np.quantile(values, [0.025, 0.5, 0.975])
-    return SkillInterval(float(q[0]), float(q[1]), float(q[2]), len(values))
+    return SkillInterval(float(q[0]), float(q[1]), float(q[2]), min(len(values), samples))
+
+
+def block_bootstrap_brier_skill(predictions: pd.DataFrame, *, samples: int = 1000, seed: int = 42, block_length: int | None = None) -> SkillInterval:
+    """Brier-skill interval using moving blocks of forecast dates."""
+    if predictions.empty or samples < 1:
+        return SkillInterval(None, None, None, 0)
+    dates = pd.DatetimeIndex(pd.to_datetime(predictions["date"].unique())).sort_values()
+    if len(dates) < 2:
+        return SkillInterval(None, None, None, 0)
+    draws = moving_block_date_samples(dates, samples=samples, seed=seed, block_length=block_length)
+    return _skill_interval_from_date_draws(predictions, draws, samples=samples)
+
+
+def iid_date_bootstrap_brier_skill(predictions: pd.DataFrame, *, samples: int = 1000, seed: int = 42) -> SkillInterval:
+    """Diagnostic-only IID date bootstrap; never use it as the promotion interval."""
+    if predictions.empty or samples < 1:
+        return SkillInterval(None, None, None, 0)
+    dates = pd.DatetimeIndex(pd.to_datetime(predictions["date"].unique())).sort_values()
+    if len(dates) < 2:
+        return SkillInterval(None, None, None, 0)
+    rng = np.random.default_rng(seed)
+    draws = (rng.choice(dates.to_numpy(), size=len(dates), replace=True) for _ in range(samples))
+    return _skill_interval_from_date_draws(predictions, draws, samples=samples)
+
+
+def bootstrap_dependence_diagnostic(predictions: pd.DataFrame, *, samples: int = 1000, seed: int = 42, block_length: int | None = None) -> DependenceDiagnostic:
+    """Quantify how much serial dependence changes reported uncertainty."""
+    block = block_bootstrap_brier_skill(predictions, samples=samples, seed=seed, block_length=block_length)
+    iid = iid_date_bootstrap_brier_skill(predictions, samples=samples, seed=seed)
+    ratio = None
+    if block.width is not None and iid.width is not None and iid.width > 0:
+        ratio = float(block.width / iid.width)
+    return DependenceDiagnostic(block=block, iid=iid, width_ratio=ratio)
 
 
 def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_days: int, min_train_dates: int = 20, calibration_dates: int = 5, test_dates_per_fold: int = 5, entity_shrinkage: float = 20.0, bootstrap_samples: int = 1000, random_state: int = 42, fit_entity_ids: set[str] | None = None, test_entity_ids: set[str] | None = None) -> BenchmarkSuiteResult:
