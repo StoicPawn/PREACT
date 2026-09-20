@@ -20,6 +20,10 @@ SCHEDULES: tuple[AcquisitionSchedule, ...] = (
         "Single shared collector for Events/Mentions/GKG; DOC queries deduplicated by fingerprint.",
     ),
     AcquisitionSchedule(
+        "google_news_rss", "15m", "cached_rss", ("preact", "goldenbull"),
+        "Query-specific feed snapshots; identical requests deduplicated by the hub.",
+    ),
+    AcquisitionSchedule(
         "world_bank", "daily", "snapshot_api", ("preact", "goldenbull_future"),
         "Daily is sufficient to capture revisions without excessive provider traffic.",
     ),
