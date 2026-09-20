@@ -282,3 +282,26 @@ class HistoricalWarehouse:
             )
             columns = [item[0] for item in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+    def list_entities(
+        self,
+        *,
+        variable: str | None = None,
+    ) -> list[str]:
+        """List entities represented in normalized evidence."""
+
+        clauses = []
+        params: list[object] = []
+        if variable:
+            clauses.append("variable = ?")
+            params.append(variable)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT entity_id FROM temporal_records"
+                + where
+                + " ORDER BY entity_id",
+                params,
+            ).fetchall()
+        return [str(row[0]) for row in rows if row[0]]
