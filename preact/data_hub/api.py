@@ -9,6 +9,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 from .gateway import SharedProviderGateway
 from .gdelt import gdelt_doc_articles
+from .google_news import google_news_search
 from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.source_catalog import SOURCE_BY_ID, SOURCES
 
@@ -103,6 +104,39 @@ def gdelt_doc(
         "articles": result.payload.get("articles", []),
     }
 
+
+
+
+
+@app.get("/v1/google-news/rss")
+def google_news_rss(
+    q: str = Query(..., min_length=1, max_length=800),
+    hl: str = Query("en-US", min_length=2, max_length=16),
+    gl: str = Query("US", min_length=2, max_length=8),
+    ceid: str = Query("US:en", min_length=3, max_length=16),
+    max_records: int = Query(60, ge=1, le=200),
+    ttl_seconds: int = Query(900, ge=0, le=86400),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    result = google_news_search(
+        gateway,
+        query=q,
+        hl=hl,
+        gl=gl,
+        ceid=ceid,
+        max_records=max_records,
+        ttl_seconds=ttl_seconds,
+    )
+    return {
+        "source": result.source_id,
+        "operation": result.operation,
+        "cached": result.cached,
+        "retrieved_at": result.retrieved_at.isoformat(),
+        "request_fingerprint": result.request_fingerprint,
+        "snapshot_checksum": result.snapshot_checksum,
+        "articles": result.payload.get("articles", []),
+    }
 
 @app.get("/v1/world-bank/indicator")
 def world_bank_indicator(
