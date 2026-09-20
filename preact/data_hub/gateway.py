@@ -52,6 +52,8 @@ class SharedProviderGateway:
         self._locks: dict[str, threading.Lock] = {}
         self._request_locks: dict[str, threading.Lock] = {}
         self._last_request: dict[str, float] = {}
+        self._stats_lock = threading.Lock()
+        self._stats: dict[str, dict[str, int]] = {}
 
     @staticmethod
     def fingerprint(
@@ -129,6 +131,34 @@ class SharedProviderGateway:
         )
         tmp.replace(path)
 
+    def _record_stat(self, source_id: str, operation: str, field: str) -> None:
+        key = f"{source_id}:{operation}"
+        with self._stats_lock:
+            bucket = self._stats.setdefault(
+                key,
+                {
+                    "calls": 0,
+                    "cache_hits": 0,
+                    "singleflight_reuses": 0,
+                    "external_requests": 0,
+                },
+            )
+            bucket[field] = bucket.get(field, 0) + 1
+
+    def stats(self) -> dict[str, dict[str, int]]:
+        with self._stats_lock:
+            return {
+                key: {
+                    **values,
+                    "deduplicated_requests": max(
+                        0,
+                        int(values.get("calls", 0))
+                        - int(values.get("external_requests", 0)),
+                    ),
+                }
+                for key, values in self._stats.items()
+            }
+
     def _throttle(self, source_id: str, minimum_interval_seconds: float) -> None:
         lock = self._locks.setdefault(source_id, threading.Lock())
         lock.acquire()
@@ -156,6 +186,8 @@ class SharedProviderGateway:
     ) -> ProviderResponse:
         """Fetch text/XML once, snapshot raw bytes, and cache decoded text."""
 
+        self._record_stat(source_id, operation, "calls")
+
         fingerprint = self.fingerprint(source_id, operation, params, url=url)
         cached = self._read_cache(
             source_id=source_id,
@@ -164,6 +196,7 @@ class SharedProviderGateway:
             ttl_seconds=ttl_seconds,
         )
         if cached is not None:
+            self._record_stat(source_id, operation, "cache_hits")
             return cached
 
         request_lock = self._request_locks.setdefault(fingerprint, threading.Lock())
@@ -175,9 +208,11 @@ class SharedProviderGateway:
                 ttl_seconds=ttl_seconds,
             )
             if cached is not None:
+                self._record_stat(source_id, operation, "singleflight_reuses")
                 return cached
 
             self._throttle(source_id, minimum_interval_seconds)
+            self._record_stat(source_id, operation, "external_requests")
             query = urlencode([(str(k), str(v)) for k, v in params.items()])
             request_url = f"{url}?{query}" if query else url
             request_headers = {
@@ -228,6 +263,8 @@ class SharedProviderGateway:
     ) -> ProviderResponse:
         """Fetch JSON once for all internal consumers, snapshot it, then fan out."""
 
+        self._record_stat(source_id, operation, "calls")
+
         fingerprint = self.fingerprint(source_id, operation, params, url=url)
         cached = self._read_cache(
             source_id=source_id,
@@ -236,6 +273,7 @@ class SharedProviderGateway:
             ttl_seconds=ttl_seconds,
         )
         if cached is not None:
+            self._record_stat(source_id, operation, "cache_hits")
             return cached
 
         # Single-flight by canonical request. With the service configured as one
@@ -251,9 +289,11 @@ class SharedProviderGateway:
                 ttl_seconds=ttl_seconds,
             )
             if cached is not None:
+                self._record_stat(source_id, operation, "singleflight_reuses")
                 return cached
 
             self._throttle(source_id, minimum_interval_seconds)
+            self._record_stat(source_id, operation, "external_requests")
 
             query = urlencode([(str(k), str(v)) for k, v in params.items()])
             request_url = f"{url}?{query}" if query else url
