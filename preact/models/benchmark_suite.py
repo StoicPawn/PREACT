@@ -62,6 +62,7 @@ class ModelBenchmark:
     predictions: pd.DataFrame
     metrics: BenchmarkMetrics
     brier_skill_interval: SkillInterval
+    dependence_diagnostic: DependenceDiagnostic | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +220,6 @@ def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_da
         if not frame.empty:
             frame = frame.sort_values(["date", "entity_id"]).reset_index(drop=True)
         metrics = evaluate_prediction_frame(frame)
-        interval = block_bootstrap_brier_skill(frame, samples=bootstrap_samples, seed=random_state)
-        models[name] = ModelBenchmark(name, frame, metrics, interval)
+        diagnostic = bootstrap_dependence_diagnostic(frame, samples=bootstrap_samples, seed=random_state)
+        models[name] = ModelBenchmark(name, frame, metrics, diagnostic.block, diagnostic)
     return BenchmarkSuiteResult(models=models, folds=tuple(folds), feature_columns=tuple(str(c) for c in x.columns))
