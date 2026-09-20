@@ -26,10 +26,15 @@ def purged_panel_folds(
     calibration_dates: int = 5,
     test_dates_per_fold: int = 5,
 ) -> list[TemporalFold]:
-    """Create expanding-window folds with an embargo equal to target horizon.
+    """Create expanding-window folds with target-horizon purges.
 
     Splits are performed on unique calendar dates, never individual rows, so all
-    countries/polities for a date remain in the same fold.
+    countries/polities for a date remain in the same fold.  The target horizon
+    is purged not only before each test window but also between the fit and
+    calibration windows.  This matters whenever calibration predictions are
+    used for model selection, weighting or probability calibration: otherwise
+    the latest fit labels can contain outcomes occurring inside the calibration
+    period.
     """
 
     if not isinstance(index, pd.MultiIndex) or "date" not in index.names:
@@ -61,7 +66,9 @@ def purged_panel_folds(
         if len(eligible) >= min_train_dates:
             n_cal = min(calibration_dates, max(1, len(eligible) // 4))
             cal = eligible[-n_cal:]
-            fit = eligible[:-n_cal]
+            calibration_start = pd.Timestamp(cal[0])
+            fit_cutoff = calibration_start - purge
+            fit = eligible[eligible < fit_cutoff]
             if len(fit) >= max(5, min_train_dates - n_cal):
                 folds.append(
                     TemporalFold(
