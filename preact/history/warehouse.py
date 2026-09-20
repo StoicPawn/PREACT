@@ -10,7 +10,7 @@ from typing import Iterable
 
 import duckdb
 
-from .schema import TemporalRecord
+from .schema import KnowledgeMode, TemporalRecord
 
 
 class HistoricalWarehouse:
@@ -106,14 +106,17 @@ class HistoricalWarehouse:
         valid_at: datetime | None = None,
         entity_id: str | None = None,
         variable: str | None = None,
+        knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     ) -> list[dict]:
         world_time = valid_at or cutoff
         clauses = [
-            "known_at <= ?",
             "valid_from <= ?",
             "(valid_to IS NULL OR ? < valid_to)",
         ]
-        params: list[object] = [cutoff, world_time, world_time]
+        params: list[object] = [world_time, world_time]
+        if knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN:
+            clauses.insert(0, "known_at <= ?")
+            params.insert(0, cutoff)
         if entity_id:
             clauses.append("entity_id = ?")
             params.append(entity_id)
@@ -139,6 +142,7 @@ class HistoricalWarehouse:
         valid_at: datetime | None = None,
         entity_id: str | None = None,
         variables: Iterable[str] | None = None,
+        knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     ) -> list[dict]:
         """Return one latest-known vintage per entity/variable/valid interval.
 
@@ -149,11 +153,13 @@ class HistoricalWarehouse:
 
         world_time = valid_at or cutoff
         clauses = [
-            "known_at <= ?",
             "valid_from <= ?",
             "(valid_to IS NULL OR ? < valid_to)",
         ]
-        params: list[object] = [cutoff, world_time, world_time]
+        params: list[object] = [world_time, world_time]
+        if knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN:
+            clauses.insert(0, "known_at <= ?")
+            params.insert(0, cutoff)
 
         if entity_id:
             clauses.append("entity_id = ?")
@@ -193,6 +199,7 @@ class HistoricalWarehouse:
         cutoff: datetime,
         entity_id: str | None = None,
         variables: Iterable[str] | None = None,
+        knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     ) -> list[dict]:
         """Return the most recent observation available for each variable.
 
@@ -202,11 +209,11 @@ class HistoricalWarehouse:
         never uses a revision before PREACT could have known it.
         """
 
-        clauses = [
-            "known_at <= ?",
-            "valid_from <= ?",
-        ]
-        params: list[object] = [cutoff, cutoff]
+        clauses = ["valid_from <= ?"]
+        params: list[object] = [cutoff]
+        if knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN:
+            clauses.insert(0, "known_at <= ?")
+            params.insert(0, cutoff)
 
         if entity_id:
             clauses.append("entity_id = ?")
