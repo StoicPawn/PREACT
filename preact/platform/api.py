@@ -11,6 +11,7 @@ from preact.history.coverage import build_coverage_report
 from preact.history.document_store import HistoricalDocumentStore
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.warehouse import HistoricalWarehouse
+from preact.history.schema import KnowledgeMode
 from preact.platform.services import HistoricalAtlasService
 
 
@@ -66,6 +67,7 @@ def atlas_state(
     knowledge_cutoff:str=Query(...),
     valid_at:str|None=Query(None),
     variable:str|None=Query(None),
+    knowledge_mode:KnowledgeMode=Query(KnowledgeMode.STRICT_AS_KNOWN),
 )->dict:
     cutoff=_parse(knowledge_cutoff,"knowledge_cutoff")
     world=_parse(valid_at,"valid_at") or cutoff
@@ -74,11 +76,13 @@ def atlas_state(
         knowledge_cutoff=cutoff,
         valid_at=world,
         variable=variable,
+        knowledge_mode=knowledge_mode,
     )
     return {
         "entity_id":state.entity_id,
         "knowledge_cutoff":state.knowledge_cutoff.isoformat(),
         "valid_at":state.valid_at.isoformat(),
+        "knowledge_mode":knowledge_mode.value,
         "records":list(state.records),
         "relations":list(state.relations),
     }
