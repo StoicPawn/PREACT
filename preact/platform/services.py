@@ -18,7 +18,7 @@ from preact.history.replay import (
     ReplaySpec,
     evaluate_binary_forecasts,
 )
-from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
+from preact.history.schema import EvidenceClass, KnowledgeMode, Provenance, TemporalRecord
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.graph_store import HistoricalGraphStore
 from preact.models.scenario_dynamics import (
@@ -59,6 +59,7 @@ class HistoricalAtlasService:
         knowledge_cutoff: datetime,
         valid_at: datetime | None = None,
         variable: str | None = None,
+        knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     ) -> AtlasState:
         world_time = valid_at or knowledge_cutoff
         rows = self.warehouse.as_of(
@@ -66,12 +67,14 @@ class HistoricalAtlasService:
             valid_at=world_time,
             entity_id=entity_id,
             variable=variable,
+            knowledge_mode=knowledge_mode,
         )
         relations = (
             self.graph.as_of(
                 cutoff=knowledge_cutoff,
                 valid_at=world_time,
                 entity_id=entity_id,
+                knowledge_mode=knowledge_mode,
             )
             if self.graph is not None
             else []
