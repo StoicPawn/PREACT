@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import math
 from typing import Iterable
 
 from preact.history.graph_store import HistoricalGraphStore
@@ -93,6 +94,31 @@ def event_history_features(
             features[f"history:active_counterparties:{relation_type}"] = float(
                 active[1] or 0
             )
+
+            # Hawkes-like excitation summaries: recent events contribute
+            # exponentially more than remote ones, without fitting a Hawkes model.
+            history_rows = conn.execute(
+                f"""
+                SELECT valid_from
+                FROM historical_relations
+                WHERE {knowledge_clause}relation_type = ?
+                  AND valid_from <= ?
+                  AND (subject_entity_id = ? OR object_entity_id = ?)
+                """,
+                [*prefix_params, relation_type, cutoff, entity_id, entity_id],
+            ).fetchall()
+            for half_life in (90, 365, 1825):
+                decay = math.log(2.0) / float(half_life)
+                intensity = 0.0
+                for (event_time,) in history_rows:
+                    age_days = max(
+                        0.0,
+                        (cutoff - event_time).total_seconds() / 86400.0,
+                    )
+                    intensity += math.exp(-decay * age_days)
+                features[
+                    f"history:decay_{half_life}d:{relation_type}"
+                ] = float(intensity)
 
             for days in windows:
                 start = cutoff - timedelta(days=days)
