@@ -33,9 +33,8 @@ def entity_feature_snapshot(
     valid_at: datetime | None = None,
     variables: Iterable[str] | None = None,
 ) -> dict[str, float]:
-    rows = warehouse.latest_state_as_of(
+    rows = warehouse.latest_observations_as_of(
         cutoff=cutoff,
-        valid_at=valid_at,
         entity_id=entity_id,
         variables=variables,
     )
