@@ -17,14 +17,21 @@ def binary_relation_target(
     cutoffs: Iterable[datetime],
     relation_type: str,
     horizon_days: int,
+    outcome_observed_through: datetime | None = None,
 ) -> pd.Series:
     if horizon_days <= 0:
         raise ValueError("horizon_days must be positive")
     horizon = timedelta(days=int(horizon_days))
-    values: dict[pd.Timestamp, int] = {}
+    values: dict[pd.Timestamp, int | pd._libs.missing.NAType] = {}
     with graph.connect() as conn:
         for cutoff in sorted(cutoffs):
             end = cutoff + horizon
+            if (
+                outcome_observed_through is not None
+                and end > outcome_observed_through
+            ):
+                values[pd.Timestamp(cutoff)] = pd.NA
+                continue
             row = conn.execute(
                 """
                 SELECT 1
@@ -38,4 +45,4 @@ def binary_relation_target(
                 [relation_type, cutoff, end, entity_id, entity_id],
             ).fetchone()
             values[pd.Timestamp(cutoff)] = int(row is not None)
-    return pd.Series(values, dtype=int).sort_index()
+    return pd.Series(values, dtype="Int64").sort_index()
