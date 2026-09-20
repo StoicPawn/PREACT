@@ -15,6 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from .hazard import ComplementaryLogLogHazard
+from .temporal_bootstrap import moving_block_date_samples
 from .temporal_cv import TemporalFold, purged_panel_folds
 
 
@@ -62,114 +63,32 @@ def _logit(p: np.ndarray) -> np.ndarray:
 
 def _builders(random_state: int) -> dict[str, Callable[[], object]]:
     return {
-        "logistic_l2": lambda: Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-                ("scale", StandardScaler()),
-                (
-                    "model",
-                    LogisticRegression(
-                        C=0.5,
-                        class_weight="balanced",
-                        max_iter=3000,
-                        solver="lbfgs",
-                        random_state=random_state,
-                    ),
-                ),
-            ]
-        ),
-        "cloglog_hazard": lambda: Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-                ("scale", StandardScaler()),
-                ("model", ComplementaryLogLogHazard(l2=1.0, max_iter=1000)),
-            ]
-        ),
-        "hist_gradient_boosting": lambda: Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-                (
-                    "model",
-                    HistGradientBoostingClassifier(
-                        learning_rate=0.04,
-                        max_iter=200,
-                        max_leaf_nodes=15,
-                        min_samples_leaf=20,
-                        l2_regularization=1.0,
-                        random_state=random_state,
-                    ),
-                ),
-            ]
-        ),
-        "extra_trees": lambda: Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
-                (
-                    "model",
-                    ExtraTreesClassifier(
-                        n_estimators=300,
-                        min_samples_leaf=5,
-                        max_features="sqrt",
-                        class_weight="balanced",
-                        n_jobs=-1,
-                        random_state=random_state,
-                    ),
-                ),
-            ]
-        ),
+        "logistic_l2": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", LogisticRegression(C=0.5, class_weight="balanced", max_iter=3000, solver="lbfgs", random_state=random_state))]),
+        "cloglog_hazard": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", ComplementaryLogLogHazard(l2=1.0, max_iter=1000))]),
+        "hist_gradient_boosting": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", HistGradientBoostingClassifier(learning_rate=0.04, max_iter=200, max_leaf_nodes=15, min_samples_leaf=20, l2_regularization=1.0, random_state=random_state))]),
+        "extra_trees": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", ExtraTreesClassifier(n_estimators=300, min_samples_leaf=5, max_features="sqrt", class_weight="balanced", n_jobs=-1, random_state=random_state))]),
     }
 
 
-def _hierarchical_rates(
-    y: pd.Series,
-    *,
-    entity_ids: pd.Index,
-    shrinkage: float = 20.0,
-) -> tuple[float, dict[str, float]]:
+def _hierarchical_rates(y: pd.Series, *, entity_ids: pd.Index, shrinkage: float = 20.0) -> tuple[float, dict[str, float]]:
     global_rate = float((y.sum() + 0.5) / (len(y) + 1.0))
-    frame = pd.DataFrame(
-        {
-            "entity_id": entity_ids.astype(str),
-            "actual": y.to_numpy(dtype=int),
-        }
-    )
+    frame = pd.DataFrame({"entity_id": entity_ids.astype(str), "actual": y.to_numpy(dtype=int)})
     grouped = frame.groupby("entity_id")["actual"].agg(["sum", "count"])
-    rates = {
-        str(entity): float(
-            (row["sum"] + shrinkage * global_rate) / (row["count"] + shrinkage)
-        )
-        for entity, row in grouped.iterrows()
-    }
+    rates = {str(entity): float((row["sum"] + shrinkage * global_rate) / (row["count"] + shrinkage)) for entity, row in grouped.iterrows()}
     return global_rate, rates
 
 
-def _baseline_for(
-    entity_ids: pd.Index,
-    global_rate: float,
-    entity_rates: Mapping[str, float],
-) -> np.ndarray:
-    return np.array(
-        [float(entity_rates.get(str(entity), global_rate)) for entity in entity_ids],
-        dtype=float,
-    )
+def _baseline_for(entity_ids: pd.Index, global_rate: float, entity_rates: Mapping[str, float]) -> np.ndarray:
+    return np.array([float(entity_rates.get(str(entity), global_rate)) for entity in entity_ids], dtype=float)
 
 
-def _calibrate(
-    model,
-    x_cal: pd.DataFrame,
-    y_cal: pd.Series,
-    raw_test: np.ndarray,
-) -> np.ndarray:
+def _calibrate(model, x_cal: pd.DataFrame, y_cal: pd.Series, raw_test: np.ndarray) -> np.ndarray:
     if len(x_cal) < 20 or y_cal.nunique() < 2:
         return np.clip(raw_test, 1e-6, 1 - 1e-6)
     raw_cal = model.predict_proba(x_cal)[:, 1]
     calibrator = LogisticRegression(C=1.0, max_iter=2000, solver="lbfgs")
     calibrator.fit(_logit(raw_cal), y_cal)
-    return np.clip(
-        calibrator.predict_proba(_logit(raw_test))[:, 1],
-        1e-6,
-        1 - 1e-6,
-    )
+    return np.clip(calibrator.predict_proba(_logit(raw_test))[:, 1], 1e-6, 1 - 1e-6)
 
 
 def evaluate_prediction_frame(df: pd.DataFrame) -> BenchmarkMetrics:
@@ -184,50 +103,32 @@ def evaluate_prediction_frame(df: pd.DataFrame) -> BenchmarkMetrics:
     fold_skills = []
     for _, group in df.groupby("fold"):
         gb = float(brier_score_loss(group["actual"], group["probability"]))
-        gbase = float(
-            brier_score_loss(group["actual"], group["baseline_probability"])
-        )
+        gbase = float(brier_score_loss(group["actual"], group["baseline_probability"]))
         if gbase > 0:
             fold_skills.append(1.0 - gb / gbase)
-    return BenchmarkMetrics(
-        rows=int(len(df)),
-        events=int(y.sum()),
-        brier=brier,
-        hierarchical_baseline_brier=base_brier,
-        brier_skill=skill,
-        log_loss=float(log_loss(y, p, labels=[0, 1])),
-        roc_auc=float(roc_auc_score(y, p)) if y.nunique() > 1 else None,
-        average_precision=float(average_precision_score(y, p))
-        if y.nunique() > 1
-        else None,
-        calibration_gap=float(p.mean() - y.mean()),
-        worst_fold_brier_skill=float(min(fold_skills)) if fold_skills else None,
-    )
+    return BenchmarkMetrics(rows=int(len(df)), events=int(y.sum()), brier=brier, hierarchical_baseline_brier=base_brier, brier_skill=skill, log_loss=float(log_loss(y, p, labels=[0, 1])), roc_auc=float(roc_auc_score(y, p)) if y.nunique() > 1 else None, average_precision=float(average_precision_score(y, p)) if y.nunique() > 1 else None, calibration_gap=float(p.mean() - y.mean()), worst_fold_brier_skill=float(min(fold_skills)) if fold_skills else None)
 
 
-def block_bootstrap_brier_skill(
-    predictions: pd.DataFrame,
-    *,
-    samples: int = 1000,
-    seed: int = 42,
-) -> SkillInterval:
+def block_bootstrap_brier_skill(predictions: pd.DataFrame, *, samples: int = 1000, seed: int = 42, block_length: int | None = None) -> SkillInterval:
+    """Brier-skill interval using moving blocks of forecast dates.
+
+    All entities on a sampled date stay together and adjacent forecast dates are
+    resampled as contiguous blocks. This avoids the anti-conservative IID date
+    bootstrap when forecast errors are serially dependent.
+    """
     if predictions.empty or samples < 1:
         return SkillInterval(None, None, None, 0)
-    dates = pd.Index(predictions["date"].unique())
+    dates = pd.DatetimeIndex(pd.to_datetime(predictions["date"].unique())).sort_values()
     if len(dates) < 2:
         return SkillInterval(None, None, None, 0)
-    rng = np.random.default_rng(seed)
     values = []
-    by_date = {date: frame for date, frame in predictions.groupby("date")}
-    for _ in range(int(samples)):
-        drawn = rng.choice(dates.to_numpy(), size=len(dates), replace=True)
-        sample = pd.concat([by_date[date] for date in drawn], ignore_index=True)
-        model_brier = float(
-            brier_score_loss(sample["actual"], sample["probability"])
-        )
-        base_brier = float(
-            brier_score_loss(sample["actual"], sample["baseline_probability"])
-        )
+    normalized = predictions.copy()
+    normalized["date"] = pd.to_datetime(normalized["date"])
+    by_date = {pd.Timestamp(date): frame for date, frame in normalized.groupby("date")}
+    for drawn in moving_block_date_samples(dates, samples=samples, seed=seed, block_length=block_length):
+        sample = pd.concat([by_date[pd.Timestamp(date)] for date in drawn], ignore_index=True)
+        model_brier = float(brier_score_loss(sample["actual"], sample["probability"]))
+        base_brier = float(brier_score_loss(sample["actual"], sample["baseline_probability"]))
         if base_brier > 0:
             values.append(1.0 - model_brier / base_brier)
     if not values:
@@ -236,22 +137,8 @@ def block_bootstrap_brier_skill(
     return SkillInterval(float(q[0]), float(q[1]), float(q[2]), len(values))
 
 
-def run_benchmark_suite(
-    features: pd.DataFrame,
-    target: pd.Series,
-    *,
-    horizon_days: int,
-    min_train_dates: int = 20,
-    calibration_dates: int = 5,
-    test_dates_per_fold: int = 5,
-    entity_shrinkage: float = 20.0,
-    bootstrap_samples: int = 1000,
-    random_state: int = 42,
-    fit_entity_ids: set[str] | None = None,
-    test_entity_ids: set[str] | None = None,
-) -> BenchmarkSuiteResult:
+def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_days: int, min_train_dates: int = 20, calibration_dates: int = 5, test_dates_per_fold: int = 5, entity_shrinkage: float = 20.0, bootstrap_samples: int = 1000, random_state: int = 42, fit_entity_ids: set[str] | None = None, test_entity_ids: set[str] | None = None) -> BenchmarkSuiteResult:
     """Evaluate all candidate models on identical purged calendar folds."""
-
     if not isinstance(features.index, pd.MultiIndex):
         raise TypeError("features must use a panel MultiIndex")
     x = features.sort_index().copy()
@@ -259,25 +146,14 @@ def run_benchmark_suite(
     valid = y.notna()
     x = x.loc[valid]
     y = y.loc[valid].astype(int)
-    folds = purged_panel_folds(
-        x.index,
-        horizon_days=horizon_days,
-        min_train_dates=min_train_dates,
-        calibration_dates=calibration_dates,
-        test_dates_per_fold=test_dates_per_fold,
-    )
-    predictions: dict[str, list[dict]] = {
-        name: [] for name in _builders(random_state)
-    }
-
+    folds = purged_panel_folds(x.index, horizon_days=horizon_days, min_train_dates=min_train_dates, calibration_dates=calibration_dates, test_dates_per_fold=test_dates_per_fold)
+    predictions: dict[str, list[dict]] = {name: [] for name in _builders(random_state)}
     dates_index = x.index.get_level_values("date")
     entity_index = x.index.get_level_values("entity_id")
-
     for fold in folds:
         fit_mask = dates_index.isin(fold.fit_dates)
         cal_mask = dates_index.isin(fold.calibration_dates)
         test_mask = dates_index.isin(fold.test_dates)
-
         if fit_entity_ids is not None:
             fit_mask = fit_mask & entity_index.astype(str).isin(fit_entity_ids)
             cal_mask = cal_mask & entity_index.astype(str).isin(fit_entity_ids)
@@ -288,60 +164,24 @@ def run_benchmark_suite(
         x_test, y_test = x.loc[test_mask], y.loc[test_mask]
         if x_fit.empty or x_test.empty or y_fit.nunique() < 2:
             continue
-
         history_y = pd.concat([y_fit, y_cal])
-        history_entities = pd.Index(
-            list(x_fit.index.get_level_values("entity_id"))
-            + list(x_cal.index.get_level_values("entity_id"))
-        )
-        global_rate, entity_rates = _hierarchical_rates(
-            history_y,
-            entity_ids=history_entities,
-            shrinkage=entity_shrinkage,
-        )
+        history_entities = pd.Index(list(x_fit.index.get_level_values("entity_id")) + list(x_cal.index.get_level_values("entity_id")))
+        global_rate, entity_rates = _hierarchical_rates(history_y, entity_ids=history_entities, shrinkage=entity_shrinkage)
         test_entities = pd.Index(x_test.index.get_level_values("entity_id"))
         baseline = _baseline_for(test_entities, global_rate, entity_rates)
-
-        for offset, (name, builder) in enumerate(_builders(random_state).items()):
+        for name, builder in _builders(random_state).items():
             model = builder()
             model.fit(x_fit, y_fit)
             raw_test = model.predict_proba(x_test)[:, 1]
             probabilities = _calibrate(model, x_cal, y_cal, raw_test)
-            for idx, actual, probability, base_probability in zip(
-                x_test.index,
-                y_test.to_numpy(),
-                probabilities,
-                baseline,
-            ):
-                predictions[name].append(
-                    {
-                        "date": pd.Timestamp(idx[x.index.names.index("date")]),
-                        "entity_id": str(
-                            idx[x.index.names.index("entity_id")]
-                        ),
-                        "fold": fold.fold,
-                        "actual": int(actual),
-                        "probability": float(probability),
-                        "baseline_probability": float(base_probability),
-                        "training_cutoff": fold.training_cutoff,
-                    }
-                )
-
+            for idx, actual, probability, base_probability in zip(x_test.index, y_test.to_numpy(), probabilities, baseline):
+                predictions[name].append({"date": pd.Timestamp(idx[x.index.names.index("date")]), "entity_id": str(idx[x.index.names.index("entity_id")]), "fold": fold.fold, "actual": int(actual), "probability": float(probability), "baseline_probability": float(base_probability), "training_cutoff": fold.training_cutoff})
     models: dict[str, ModelBenchmark] = {}
     for name, rows in predictions.items():
         frame = pd.DataFrame(rows)
         if not frame.empty:
             frame = frame.sort_values(["date", "entity_id"]).reset_index(drop=True)
         metrics = evaluate_prediction_frame(frame)
-        interval = block_bootstrap_brier_skill(
-            frame,
-            samples=bootstrap_samples,
-            seed=random_state,
-        )
+        interval = block_bootstrap_brier_skill(frame, samples=bootstrap_samples, seed=random_state)
         models[name] = ModelBenchmark(name, frame, metrics, interval)
-
-    return BenchmarkSuiteResult(
-        models=models,
-        folds=tuple(folds),
-        feature_columns=tuple(str(c) for c in x.columns),
-    )
+    return BenchmarkSuiteResult(models=models, folds=tuple(folds), feature_columns=tuple(str(c) for c in x.columns))
