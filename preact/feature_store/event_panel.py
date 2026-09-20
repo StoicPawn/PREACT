@@ -42,6 +42,7 @@ def build_event_risk_panel(
     include_relation_history: bool = True,
     include_temporal_dynamics: bool = True,
     include_target_history: bool = True,
+    outcome_observed_through: datetime | None = None,
 ) -> EventPanelDataset:
     """Build a panel for outcomes such as coup attempts or successful coups."""
 
@@ -49,7 +50,7 @@ def build_event_risk_panel(
     dates = tuple(sorted(set(cutoffs)))
     variables = tuple(dict.fromkeys(str(v) for v in feature_variables))
     feature_rows: list[dict[str, object]] = []
-    target_values: dict[tuple[pd.Timestamp, str], int] = {}
+    target_values: dict[tuple[pd.Timestamp, str], object] = {}
 
     for entity_id in entities:
         target = binary_event_target(
@@ -58,6 +59,7 @@ def build_event_risk_panel(
             cutoffs=dates,
             target_variable=target_variable,
             horizon_days=horizon_days,
+            outcome_observed_through=outcome_observed_through,
         )
         for cutoff in dates:
             row: dict[str, object] = {
@@ -112,14 +114,14 @@ def build_event_risk_panel(
                     )
                 )
             feature_rows.append(row)
-            target_values[(pd.Timestamp(cutoff), entity_id)] = int(
-                target.loc[pd.Timestamp(cutoff)]
-            )
+            target_values[(pd.Timestamp(cutoff), entity_id)] = target.loc[
+                pd.Timestamp(cutoff)
+            ]
 
     if not feature_rows:
         return EventPanelDataset(
             pd.DataFrame(),
-            pd.Series(dtype=int),
+            pd.Series(dtype="Int64"),
             entities,
             horizon_days,
             target_variable,
@@ -129,7 +131,7 @@ def build_event_risk_panel(
         .set_index(["date", "entity_id"])
         .sort_index()
     )
-    y = pd.Series(target_values, dtype=int)
+    y = pd.Series(target_values, dtype="Int64")
     y.index = pd.MultiIndex.from_tuples(
         y.index, names=["date", "entity_id"]
     )
