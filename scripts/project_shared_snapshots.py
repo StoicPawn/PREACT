@@ -33,4 +33,4 @@ if __name__ == "__main__":
         documents=HistoricalDocumentStore(document_db),
         fips_to_iso3=load_fips_to_iso3(country_code_map),
     )
-    print(json.dumps(projector.project_pending_gdelt(), indent=2))
+    print(json.dumps(projector.project_pending_shared_news(), indent=2))
