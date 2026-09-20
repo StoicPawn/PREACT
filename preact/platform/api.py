@@ -14,6 +14,7 @@ from preact.history.document_store import HistoricalDocumentStore
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.schema import KnowledgeMode
+from preact.history.source_plan import SOURCE_PLAN
 from preact.feature_store.panel import build_relation_risk_panel
 from preact.feature_store.temporal import entity_feature_frame
 from preact.models.governance import evaluate_promotion
@@ -99,6 +100,18 @@ def _parse(value:str|None,name:str)->datetime|None:
 @app.get("/health")
 def health()->dict:
     return {"status":"ok","service":"historical-geopolitical-api"}
+
+
+@app.get("/v1/sources/plan")
+def source_plan()->dict:
+    return {"sources":[{
+        "source_id":x.source_id,
+        "wave":x.wave,
+        "order":x.order,
+        "role":x.role,
+        "dependencies":list(x.dependencies),
+        "required_for":list(x.required_for),
+    } for x in SOURCE_PLAN]}
 
 
 @app.get("/v1/sources/coverage")
