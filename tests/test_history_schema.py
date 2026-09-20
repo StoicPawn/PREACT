@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from preact.history import EvidenceClass, HistoricalQuery, Provenance, TemporalRecord
+from preact.history import EvidenceClass, HistoricalQuery, KnowledgeMode, Provenance, TemporalRecord
 
 UTC = timezone.utc
 
@@ -45,3 +45,23 @@ def test_valid_time_is_independent_from_knowledge_time() -> None:
     query_outside = HistoricalQuery(knowledge_cutoff=_dt(2001, 1, 1), valid_at=_dt(1915, 1, 1))
     assert query_inside.filter([record]) == [record]
     assert query_outside.filter([record]) == []
+
+
+
+def test_retrospective_query_allows_later_coding_of_past() -> None:
+    record = _record(
+        known_at=_dt(2026, 1, 1),
+        valid_from=_dt(1960, 1, 1),
+        valid_to=_dt(1961, 1, 1),
+    )
+    strict = HistoricalQuery(
+        knowledge_cutoff=_dt(1960, 6, 1),
+        valid_at=_dt(1960, 6, 1),
+    )
+    retrospective = HistoricalQuery(
+        knowledge_cutoff=_dt(1960, 6, 1),
+        valid_at=_dt(1960, 6, 1),
+        knowledge_mode=KnowledgeMode.RETROSPECTIVE,
+    )
+    assert strict.filter([record]) == []
+    assert retrospective.filter([record]) == [record]
