@@ -31,6 +31,12 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "shared-data-hub"}
 
 
+@app.get("/v1/stats")
+def provider_stats(authorization: str | None = Header(default=None)) -> dict:
+    _authorize(authorization)
+    return {"providers": gateway.stats()}
+
+
 @app.get("/v1/sources")
 def sources(authorization: str | None = Header(default=None)) -> dict:
     _authorize(authorization)
