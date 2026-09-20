@@ -76,10 +76,16 @@ class WorldBankIndicatorConnector:
                 value = float(value_raw) if value_raw is not None else None
             except (TypeError, ValueError):
                 value = None
+            indicator_meta = row.get("indicator")
+            indicator_id = (
+                indicator_meta.get("id")
+                if isinstance(indicator_meta, dict)
+                else indicator
+            )
             observations.append(
                 WorldBankObservation(
                     country_iso3=iso3,
-                    indicator=str(row.get("indicator", {}).get("id") or indicator),
+                    indicator=str(indicator_id or indicator),
                     year=year,
                     value=value,
                     retrieved_at=response.retrieved_at,
