@@ -71,7 +71,11 @@ class COWStateSystemConnector:
             COWStateSystemConnector._date(row, "end")
             for row in normalized_rows
         ]
-        coverage_end = max(end_dates) if end_dates else None
+        # State System Membership v2024 is documented through 2024-12-31.
+        # Never infer the release boundary from a filtered/subset payload: doing
+        # so would incorrectly right-censor the latest historical state in that
+        # subset.
+        release_coverage_end = datetime(2024, 12, 31, tzinfo=timezone.utc)
 
         entities: list[PoliticalEntity] = []
         for normalized, end_inclusive in zip(normalized_rows, end_dates):
@@ -83,7 +87,7 @@ class COWStateSystemConnector:
             # The latest release closes still-active states at the dataset coverage
             # boundary (2024-12-31). Treat that boundary as right-censoring rather
             # than falsely claiming that all current states ended in 2024.
-            right_censored = coverage_end is not None and end_inclusive == coverage_end
+            right_censored = end_inclusive == release_coverage_end
             valid_to = None if right_censored else end_inclusive + timedelta(days=1)
 
             entity_id = f"cow:{ccode}:{start.date().isoformat()}"
