@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from preact.history.connectors.ucdp import UCDPPage
 from preact.history.connectors.unhcr import UNHCRPage
+from preact.history.connectors.un_population import UNPopulationPage
 from preact.history.connectors.world_bank import WorldBankObservation
 from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
 
@@ -234,6 +235,90 @@ def ucdp_records(
                         "resource": page.resource,
                         "version": page.version,
                         "release_timestamp_supplied": version_release_at is not None,
+                    },
+                )
+            )
+    return output
+
+
+
+def un_population_records(
+    pages: Sequence[UNPopulationPage],
+) -> list[TemporalRecord]:
+    """Normalize current UN Population Data Portal rows conservatively.
+
+    The current API snapshot may contain historical estimates, but unless a
+    release-specific publication time is supplied elsewhere, known_at remains
+    retrieval time. This keeps strict replay free from retrospective leakage.
+    """
+
+    output: list[TemporalRecord] = []
+    for page in pages:
+        for row in page.rows:
+            year = _int_or_none(
+                row.get("TimeLabel")
+                or row.get("Time")
+                or row.get("Year")
+                or row.get("year")
+            )
+            if year is None or year < 1:
+                continue
+
+            iso3 = str(
+                row.get("ISO3AlphaCode")
+                or row.get("Iso3")
+                or row.get("ISO3")
+                or ""
+            ).strip().upper()
+            location_id = str(
+                row.get("LocationId")
+                or row.get("Location")
+                or row.get("LocID")
+                or page.locations
+            ).strip()
+            entity_id = f"iso3:{iso3}" if len(iso3) == 3 else f"un_location:{location_id}"
+
+            indicator_id = str(
+                row.get("IndicatorId")
+                or row.get("Indicator")
+                or page.indicators
+            ).strip()
+            value = (
+                _float_or_none(row.get("Value"))
+                if "Value" in row
+                else _float_or_none(row.get("value"))
+            )
+            material = (
+                indicator_id,
+                location_id,
+                year,
+                tuple(sorted((str(k), str(v)) for k, v in row.items())),
+            )
+            output.append(
+                TemporalRecord(
+                    record_id=_record_id("un_wpp", material),
+                    entity_id=entity_id,
+                    variable=f"un_wpp:{indicator_id}",
+                    value=value if value is not None else dict(row),
+                    valid_from=datetime(year, 1, 1, tzinfo=timezone.utc),
+                    valid_to=datetime(year + 1, 1, 1, tzinfo=timezone.utc),
+                    known_at=page.retrieved_at,
+                    evidence_class=EvidenceClass.OBSERVATION,
+                    provenance=Provenance(
+                        source="un_wpp",
+                        source_ref=f"{indicator_id}:{location_id}:{year}",
+                        retrieved_at=page.retrieved_at,
+                        transform="UN Population Data Portal row -> annual bitemporal record",
+                        notes=(
+                            "Current WPP/Data Portal snapshot; historical estimates are "
+                            "not backdated for strict replay."
+                        ),
+                    ),
+                    attributes={
+                        "snapshot_checksum": page.snapshot_checksum,
+                        "indicator_id": indicator_id,
+                        "location_id": location_id,
+                        "raw_row": dict(row),
                     },
                 )
             )
