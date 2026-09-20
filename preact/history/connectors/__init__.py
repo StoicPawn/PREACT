@@ -1,6 +1,7 @@
 """Historical source connectors."""
 
 from .base import AcquiredDataset, BulkFileConnector
+from .chronicling_america import ChroniclingAmericaConnector
 from .cow import COWStateSystemConnector
 from .geonames import CountryCodeMap, GeoNamesCountryInfoConnector
 from .cshapes import CShapesConnector
@@ -13,6 +14,7 @@ from .world_bank import WorldBankIndicatorConnector
 
 __all__ = [
     "AcquiredDataset",
+    "ChroniclingAmericaConnector",
     "BulkFileConnector",
     "COWStateSystemConnector",
     "CountryCodeMap",
