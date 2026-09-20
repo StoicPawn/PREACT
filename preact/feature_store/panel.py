@@ -15,6 +15,7 @@ from .graph import graph_feature_snapshot
 from .event_history import event_history_features
 from .graph_targets import binary_relation_target
 from .temporal import entity_feature_snapshot
+from .temporal_dynamics import entity_temporal_dynamics_snapshot
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ def build_relation_risk_panel(
     graph_recent_days: int = 365,
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     include_event_history: bool = True,
+    include_temporal_dynamics: bool = True,
 ) -> PanelDataset:
     entities=tuple(sorted(set(entity_ids)))
     dates=tuple(sorted(set(cutoffs)))
@@ -62,6 +64,14 @@ def build_relation_risk_panel(
                 variables=variables,
                 knowledge_mode=knowledge_mode,
             ))
+            if include_temporal_dynamics:
+                row.update(entity_temporal_dynamics_snapshot(
+                    warehouse,
+                    entity_id=entity_id,
+                    cutoff=cutoff,
+                    variables=variables,
+                    knowledge_mode=knowledge_mode,
+                ))
             row.update(graph_feature_snapshot(
                 graph,
                 entity_id=entity_id,
