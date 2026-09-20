@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 import json
 from typing import Callable, Iterable, Mapping, Sequence
 
+import pandas as pd
+
 from preact.history.replay import (
     ForecastObservation,
     HistoricalReplayEngine,
@@ -16,6 +18,10 @@ from preact.history.replay import (
 )
 from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
 from preact.history.warehouse import HistoricalWarehouse
+from preact.models.replay_baseline import (
+    ReplayBacktestResult,
+    purged_walk_forward_backtest,
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,24 @@ class ReplayLabService:
     @staticmethod
     def evaluate(observations: Iterable[ForecastObservation]) -> ReplayMetrics:
         return evaluate_binary_forecasts(observations)
+
+
+    @staticmethod
+    def backtest_binary(
+        *,
+        features: pd.DataFrame,
+        target: pd.Series,
+        horizon_days: int,
+        n_splits: int = 5,
+        calibration_fraction: float = 0.20,
+    ) -> ReplayBacktestResult:
+        return purged_walk_forward_backtest(
+            features,
+            target,
+            horizon_days=horizon_days,
+            n_splits=n_splits,
+            calibration_fraction=calibration_fraction,
+        )
 
 
 @dataclass(frozen=True)
