@@ -99,8 +99,8 @@ SOURCES: tuple[SourceSpec, ...] = (
     SourceSpec(
         "ucdp", "Uppsala Conflict Data Program", ("conflict", "violence"),
         "1946-present; georeferenced events 1989-present", "monthly/yearly",
-        "open", "native_vintages", "core", "https://ucdp.uu.se/",
-        notes="REST API plus versioned annual and candidate-event releases."
+        "free_registration", "native_vintages", "core", "https://ucdp.uu.se/",
+        notes="Free token-protected API. Every call must pin a dataset version; UCDP documents versioned URLs as reproducible indefinitely."
     ),
     SourceSpec(
         "acled", "ACLED", ("conflict", "protest", "political_violence"),
