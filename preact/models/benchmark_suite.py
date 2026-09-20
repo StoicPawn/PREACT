@@ -247,6 +247,8 @@ def run_benchmark_suite(
     entity_shrinkage: float = 20.0,
     bootstrap_samples: int = 1000,
     random_state: int = 42,
+    fit_entity_ids: set[str] | None = None,
+    test_entity_ids: set[str] | None = None,
 ) -> BenchmarkSuiteResult:
     """Evaluate all candidate models on identical purged calendar folds."""
 
@@ -275,6 +277,12 @@ def run_benchmark_suite(
         fit_mask = dates_index.isin(fold.fit_dates)
         cal_mask = dates_index.isin(fold.calibration_dates)
         test_mask = dates_index.isin(fold.test_dates)
+
+        if fit_entity_ids is not None:
+            fit_mask = fit_mask & entity_index.astype(str).isin(fit_entity_ids)
+            cal_mask = cal_mask & entity_index.astype(str).isin(fit_entity_ids)
+        if test_entity_ids is not None:
+            test_mask = test_mask & entity_index.astype(str).isin(test_entity_ids)
         x_fit, y_fit = x.loc[fit_mask], y.loc[fit_mask]
         x_cal, y_cal = x.loc[cal_mask], y.loc[cal_mask]
         x_test, y_test = x.loc[test_mask], y.loc[test_mask]
