@@ -21,6 +21,11 @@ from preact.history.replay import (
 from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.graph_store import HistoricalGraphStore
+from preact.models.scenario_dynamics import (
+    ScenarioDistribution,
+    ScenarioShock,
+    StochasticVARScenarioModel,
+)
 from preact.models.replay_baseline import (
     ReplayBacktestResult,
     purged_walk_forward_backtest,
@@ -259,3 +264,29 @@ class ScenarioLabService:
             records=tuple(output),
             interventions=tuple(interventions),
         )
+
+    @staticmethod
+    def simulate_dynamics(
+        *,
+        history: pd.DataFrame,
+        initial_state: Mapping[str, float],
+        steps: int,
+        runs: int = 1000,
+        shocks: Sequence[ScenarioShock] = (),
+        seed: int = 42,
+        alpha: float = 1.0,
+    ) -> ScenarioDistribution:
+        """Fit transparent historical dynamics and return Monte-Carlo trajectories.
+
+        Results are conditional counterfactual trajectories, not identified
+        causal effects and not deterministic forecasts.
+        """
+        model = StochasticVARScenarioModel(alpha=alpha).fit(history)
+        return model.simulate(
+            initial_state=initial_state,
+            steps=steps,
+            runs=runs,
+            shocks=shocks,
+            seed=seed,
+        )
+
