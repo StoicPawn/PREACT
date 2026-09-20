@@ -55,3 +55,38 @@ def test_gateway_fingerprint_distinguishes_same_params_on_different_urls(tmp_pat
         url="https://api.worldbank.org/v2/country/FRA/indicator/X",
     )
     assert italy != france
+
+
+
+def test_gateway_stats_count_cached_reuse(tmp_path) -> None:
+    gateway = SharedProviderGateway(tmp_path)
+    fingerprint = gateway.fingerprint(
+        "gdelt",
+        "doc",
+        {"q": "x"},
+        url="https://example.test/api",
+    )
+    response = ProviderResponse(
+        source_id="gdelt",
+        operation="doc",
+        payload={"articles": []},
+        retrieved_at=datetime.now(UTC),
+        cached=False,
+        request_fingerprint=fingerprint,
+        snapshot_checksum="abc",
+    )
+    gateway._write_cache(response)
+
+    cached = gateway.get_json(
+        source_id="gdelt",
+        operation="doc",
+        url="https://example.test/api",
+        params={"q": "x"},
+        ttl_seconds=3600,
+    )
+    assert cached.cached is True
+    stats = gateway.stats()["gdelt:doc"]
+    assert stats["calls"] == 1
+    assert stats["cache_hits"] == 1
+    assert stats["external_requests"] == 0
+    assert stats["deduplicated_requests"] == 1
