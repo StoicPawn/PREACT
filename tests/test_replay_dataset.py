@@ -53,3 +53,20 @@ def test_replay_dataset_uses_past_features_and_future_event_only_as_label(tmp_pa
     assert dataset.target.iloc[0] == 1
     # The future event is the label, not a feature.
     assert "event:coup" not in dataset.features.columns
+
+
+
+def test_event_target_marks_unobserved_horizon_as_censored(tmp_path) -> None:
+    from preact.feature_store.targets import binary_event_target
+
+    warehouse = HistoricalWarehouse(tmp_path / "history-censored.duckdb")
+    cutoff = datetime(2020, 12, 15, tzinfo=UTC)
+    target = binary_event_target(
+        warehouse,
+        entity_id="iso3:AAA",
+        cutoffs=[cutoff],
+        target_variable="event:coup",
+        horizon_days=30,
+        outcome_observed_through=datetime(2020, 12, 31, tzinfo=UTC),
+    )
+    assert target.isna().iloc[0]
