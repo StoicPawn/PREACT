@@ -9,6 +9,8 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 
+from preact.feature_store.replay_dataset import build_replay_dataset
+
 from preact.history.replay import (
     ForecastObservation,
     HistoricalReplayEngine,
@@ -102,6 +104,35 @@ class ReplayLabService:
         return purged_walk_forward_backtest(
             features,
             target,
+            horizon_days=horizon_days,
+            n_splits=n_splits,
+            calibration_fraction=calibration_fraction,
+        )
+
+
+    @staticmethod
+    def backtest_from_warehouse(
+        *,
+        warehouse: HistoricalWarehouse,
+        entity_id: str,
+        cutoffs: Iterable[datetime],
+        feature_variables: Iterable[str],
+        target_variable: str,
+        horizon_days: int,
+        n_splits: int = 5,
+        calibration_fraction: float = 0.20,
+    ) -> ReplayBacktestResult:
+        dataset = build_replay_dataset(
+            warehouse,
+            entity_id=entity_id,
+            cutoffs=cutoffs,
+            feature_variables=feature_variables,
+            target_variable=target_variable,
+            horizon_days=horizon_days,
+        )
+        return purged_walk_forward_backtest(
+            dataset.features,
+            dataset.target,
             horizon_days=horizon_days,
             n_splits=n_splits,
             calibration_fraction=calibration_fraction,
