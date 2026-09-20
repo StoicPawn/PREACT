@@ -54,11 +54,18 @@ class SharedProviderGateway:
         self._last_request: dict[str, float] = {}
 
     @staticmethod
-    def fingerprint(source_id: str, operation: str, params: Mapping[str, Any]) -> str:
+    def fingerprint(
+        source_id: str,
+        operation: str,
+        params: Mapping[str, Any],
+        *,
+        url: str = "",
+    ) -> str:
         material = json.dumps(
             {
                 "source_id": source_id,
                 "operation": operation,
+                "url": url,
                 "params": dict(sorted((str(k), v) for k, v in params.items())),
             },
             sort_keys=True,
@@ -148,7 +155,7 @@ class SharedProviderGateway:
     ) -> ProviderResponse:
         """Fetch JSON once for all internal consumers, snapshot it, then fan out."""
 
-        fingerprint = self.fingerprint(source_id, operation, params)
+        fingerprint = self.fingerprint(source_id, operation, params, url=url)
         cached = self._read_cache(
             source_id=source_id,
             operation=operation,
