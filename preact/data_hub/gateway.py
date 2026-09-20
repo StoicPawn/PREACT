@@ -192,6 +192,7 @@ class SharedProviderGateway:
                 retrieved_at=retrieved_at,
                 source_url=request_url,
                 content_type=content_type,
+                operation=operation,
                 request=dict(params),
             )
             payload = json.loads(payload_bytes.decode("utf-8"))
