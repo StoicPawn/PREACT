@@ -31,6 +31,7 @@ from preact.history.ingestion_state import IngestionStateStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.wave1_pipeline import Wave1IngestionPipeline
+from preact.projections.historical_workbooks import maddison_records, sipri_milex_records
 from preact.projections.cow_network import (
     cow_alliance_relations,
     cow_contiguity_relations,
@@ -202,14 +203,22 @@ class Wave1Runner:
             BulkFileConnector("maddison", self.snapshot_store),
         )
         acquired = connector.acquire()
+        records = maddison_records(
+            acquired.payload,
+            known_at=acquired.retrieved_at,
+            retrieved_at=acquired.retrieved_at,
+            dataset_version=acquired.snapshot.source_release or "MPD 2023",
+        )
+        inserted = self.warehouse.insert_records(records)
         return SourceRun(
             "maddison",
             "success",
-            rows=0,
+            rows=len(records),
             snapshots=1,
             metadata={
                 "release": acquired.snapshot.source_release,
                 "snapshot_checksum": acquired.snapshot.checksum_sha256,
+                "rows_inserted": inserted,
                 "strict_replay_eligible_before_retrieval": (
                     acquired.replay_eligible_before_retrieval
                 ),
@@ -221,14 +230,22 @@ class Wave1Runner:
             BulkFileConnector("sipri", self.snapshot_store)
         )
         acquired = connector.acquire()
+        records = sipri_milex_records(
+            acquired.payload,
+            known_at=acquired.retrieved_at,
+            retrieved_at=acquired.retrieved_at,
+            dataset_version=acquired.snapshot.source_release or "SIPRI Milex",
+        )
+        inserted = self.warehouse.insert_records(records)
         return SourceRun(
             "sipri",
             "success",
-            rows=0,
+            rows=len(records),
             snapshots=1,
             metadata={
                 "release": acquired.snapshot.source_release,
                 "snapshot_checksum": acquired.snapshot.checksum_sha256,
+                "rows_inserted": inserted,
                 "strict_replay_eligible_before_retrieval": (
                     acquired.replay_eligible_before_retrieval
                 ),
