@@ -142,6 +142,7 @@ class GDELTRealtimeCollector:
                 source_url=ref.url,
                 source_release=Path(ref.url).name,
                 content_type=content_type,
+                operation=f"realtime_{ref.kind}",
                 notes=f"gdelt_realtime_kind={ref.kind}; md5={ref.expected_md5 or ''}",
             )
             state[ref.url] = snapshot.checksum_sha256
