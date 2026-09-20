@@ -21,11 +21,12 @@ def test_gdelt_event_projection_preserves_event_and_knowledge_time() -> None:
         ],
         acquired_at=datetime(2026, 1, 1, tzinfo=UTC),
         snapshot_checksum="abc",
+        fips_to_iso3={"IT": "ITA"},
     )
     record = records[0]
     assert record.valid_from.isoformat().startswith("2020-01-01")
     assert record.known_at.isoformat().startswith("2020-01-02T12:30")
-    assert record.entity_id == "gdelt_country:IT"
+    assert record.entity_id == "iso3:ITA"
     assert record.attributes["snapshot_checksum"] == "abc"
 
 
