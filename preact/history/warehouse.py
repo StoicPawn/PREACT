@@ -238,3 +238,40 @@ class HistoricalWarehouse:
             cursor = conn.execute(sql, params)
             columns = [item[0] for item in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+    def records_in_valid_window(
+        self,
+        *,
+        start_exclusive: datetime,
+        end_inclusive: datetime,
+        entity_id: str | None = None,
+        variable: str | None = None,
+    ) -> list[dict]:
+        """Read realized records by valid/event time for outcome construction.
+
+        This intentionally does not apply a knowledge cutoff: it is for ex-post
+        labels and evaluation truth, never for model features.
+        """
+
+        clauses = [
+            "valid_from > ?",
+            "valid_from <= ?",
+        ]
+        params: list[object] = [start_exclusive, end_inclusive]
+        if entity_id:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+        if variable:
+            clauses.append("variable = ?")
+            params.append(variable)
+
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM temporal_records WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY valid_from, record_id",
+                params,
+            )
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
