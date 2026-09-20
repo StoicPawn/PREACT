@@ -48,6 +48,13 @@ SOURCES: tuple[SourceSpec, ...] = (
         notes="Global event/news-derived signals; keep raw daily/15-minute files and source URLs."
     ),
     SourceSpec(
+        "google_news_rss", "Google News RSS", ("media", "news_discovery"),
+        "current/recent search feed", "continuous", "mixed_rights",
+        "snapshot_required", "high", "https://news.google.com/",
+        licence_note="RSS metadata is used for discovery; linked article content retains publisher-specific rights.",
+        notes="Shared with GoldenBull. Persist feed XML/metadata and URLs, not unrestricted article bodies."
+    ),
+    SourceSpec(
         "mediacloud", "Media Cloud", ("media", "news_archive"), "source-dependent",
         "continuous", "open", "snapshot_required", "high",
         "https://www.mediacloud.org/",
