@@ -32,9 +32,11 @@ def event_variable_history_features(
             params.append(cutoff)
         with warehouse.connect() as conn:
             rows = conn.execute(
-                "SELECT valid_from FROM temporal_records WHERE "
+                "SELECT MIN(valid_from) AS valid_from "
+                "FROM temporal_records WHERE "
                 + " AND ".join(clauses)
-                + " ORDER BY valid_from",
+                + " GROUP BY source, source_ref "
+                "ORDER BY valid_from",
                 params,
             ).fetchall()
         dates = [row[0] for row in rows]
