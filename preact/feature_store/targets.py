@@ -23,7 +23,7 @@ def binary_event_target(
 
     if horizon_days <= 0:
         raise ValueError("horizon_days must be positive")
-    values: dict[pd.Timestamp, int | pd._libs.missing.NAType] = {}
+    values: dict[pd.Timestamp, object] = {}
     horizon = timedelta(days=int(horizon_days))
     for cutoff in sorted(cutoffs):
         if (
