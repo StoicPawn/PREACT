@@ -12,6 +12,7 @@ from preact.history.graph_store import HistoricalGraphStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.schema import KnowledgeMode
 from .graph import graph_feature_snapshot
+from .event_history import event_history_features
 from .graph_targets import binary_relation_target
 from .temporal import entity_feature_snapshot
 
@@ -36,6 +37,7 @@ def build_relation_risk_panel(
     horizon_days: int,
     graph_recent_days: int = 365,
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
+    include_event_history: bool = True,
 ) -> PanelDataset:
     entities=tuple(sorted(set(entity_ids)))
     dates=tuple(sorted(set(cutoffs)))
@@ -67,6 +69,13 @@ def build_relation_risk_panel(
                 recent_days=graph_recent_days,
                 knowledge_mode=knowledge_mode,
             ))
+            if include_event_history:
+                row.update(event_history_features(
+                    graph,
+                    entity_id=entity_id,
+                    cutoff=cutoff,
+                    knowledge_mode=knowledge_mode,
+                ))
             feature_rows.append(row)
             target_values[(pd.Timestamp(cutoff),entity_id)]=int(y.loc[pd.Timestamp(cutoff)])
 
