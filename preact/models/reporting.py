@@ -16,6 +16,7 @@ def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
     can expose when serial dependence materially changes uncertainty.
     """
     payload: dict[str, Any] = {
+        "name": benchmark.name,
         "metrics": asdict(benchmark.metrics),
         "brier_skill_interval": asdict(benchmark.brier_skill_interval),
     }
@@ -27,6 +28,9 @@ def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
             "block": asdict(diagnostic.block),
             "iid": asdict(diagnostic.iid),
             "width_ratio": diagnostic.width_ratio,
+            "iid_understates_uncertainty": (
+                diagnostic.width_ratio is not None and diagnostic.width_ratio > 1.0
+            ),
         }
     )
     return payload
