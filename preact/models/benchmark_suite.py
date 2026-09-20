@@ -172,7 +172,7 @@ def _calibrate(
     )
 
 
-def _metric_frame(df: pd.DataFrame) -> BenchmarkMetrics:
+def evaluate_prediction_frame(df: pd.DataFrame) -> BenchmarkMetrics:
     if df.empty:
         return BenchmarkMetrics(0, 0, None, None, None, None, None, None, None, None)
     y = df["actual"].astype(int)
@@ -324,7 +324,7 @@ def run_benchmark_suite(
         frame = pd.DataFrame(rows)
         if not frame.empty:
             frame = frame.sort_values(["date", "entity_id"]).reset_index(drop=True)
-        metrics = _metric_frame(frame)
+        metrics = evaluate_prediction_frame(frame)
         interval = block_bootstrap_brier_skill(
             frame,
             samples=bootstrap_samples,
