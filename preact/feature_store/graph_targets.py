@@ -22,7 +22,7 @@ def binary_relation_target(
     if horizon_days <= 0:
         raise ValueError("horizon_days must be positive")
     horizon = timedelta(days=int(horizon_days))
-    values: dict[pd.Timestamp, int | pd._libs.missing.NAType] = {}
+    values: dict[pd.Timestamp, object] = {}
     with graph.connect() as conn:
         for cutoff in sorted(cutoffs):
             end = cutoff + horizon
