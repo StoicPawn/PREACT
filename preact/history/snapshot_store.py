@@ -22,8 +22,14 @@ class SnapshotMetadata:
     source_release: Optional[str] = None
     content_type: Optional[str] = None
     licence_reference: Optional[str] = None
+    operation: Optional[str] = None
     notes: Optional[str] = None
     request: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def snapshot_id(self) -> str:
+        stamp = self.retrieved_at.astimezone(timezone.utc).isoformat()
+        return f"{self.source_id}:{stamp}:{self.checksum_sha256}"
 
     def as_json_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -60,6 +66,7 @@ class SourceSnapshotStore:
         source_release: str | None = None,
         content_type: str | None = None,
         licence_reference: str | None = None,
+        operation: str | None = None,
         notes: str | None = None,
         request: Mapping[str, Any] | None = None,
     ) -> SnapshotMetadata:
@@ -92,6 +99,7 @@ class SourceSnapshotStore:
             source_release=source_release,
             content_type=content_type,
             licence_reference=licence_reference,
+            operation=operation,
             notes=notes,
             request=dict(request or {}),
         )
@@ -110,6 +118,51 @@ class SourceSnapshotStore:
             metadata_path.write_bytes(encoded)
 
         return metadata
+
+    @staticmethod
+    def _from_json_dict(raw: Mapping[str, Any]) -> SnapshotMetadata:
+        retrieved_at = datetime.fromisoformat(
+            str(raw["retrieved_at"]).replace("Z", "+00:00")
+        )
+        if retrieved_at.tzinfo is None:
+            retrieved_at = retrieved_at.replace(tzinfo=timezone.utc)
+        return SnapshotMetadata(
+            source_id=str(raw["source_id"]),
+            retrieved_at=retrieved_at.astimezone(timezone.utc),
+            source_url=str(raw["source_url"]),
+            checksum_sha256=str(raw["checksum_sha256"]),
+            payload_path=str(raw["payload_path"]),
+            source_release=raw.get("source_release"),
+            content_type=raw.get("content_type"),
+            licence_reference=raw.get("licence_reference"),
+            operation=raw.get("operation"),
+            notes=raw.get("notes"),
+            request=dict(raw.get("request") or {}),
+        )
+
+    def iter_metadata(
+        self,
+        *,
+        source_id: str | None = None,
+    ) -> list[SnapshotMetadata]:
+        """Return immutable acquisition records in retrieval order."""
+
+        roots = [self.metadata_root / source_id] if source_id else [self.metadata_root]
+        snapshots: list[SnapshotMetadata] = []
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.json"):
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        snapshots.append(self._from_json_dict(raw))
+                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+        return sorted(
+            snapshots,
+            key=lambda item: (item.retrieved_at, item.checksum_sha256, item.source_url),
+        )
 
     def read_payload(self, snapshot: SnapshotMetadata) -> bytes:
         """Read and verify the exact raw payload referenced by a snapshot."""
