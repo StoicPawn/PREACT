@@ -8,12 +8,14 @@ from typing import Any, Mapping
 from preact.data_hub.gateway import SharedProviderGateway
 from preact.history.connectors.ucdp import UCDPConnector
 from preact.history.connectors.unhcr import UNHCRConnector
+from preact.history.connectors.un_population import UNPopulationConnector
 from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.ingestion_state import IngestionStateStore, SourceRun
 from preact.history.warehouse import HistoricalWarehouse
 from preact.projections.wave1 import (
     ucdp_records,
     unhcr_records,
+    un_population_records,
     world_bank_records,
 )
 
@@ -143,5 +145,44 @@ class Wave1IngestionPipeline:
                     if version_release_at
                     else None
                 ),
+            },
+        )
+
+
+    def ingest_un_population(
+        self,
+        *,
+        indicators: str,
+        locations: str,
+        start_year: int,
+        end_year: int,
+        max_pages: int | None = None,
+    ) -> dict[str, object]:
+        started_at = datetime.now(timezone.utc)
+        pages = UNPopulationConnector(self.gateway).fetch_pages(
+            indicators=indicators,
+            locations=locations,
+            start_year=start_year,
+            end_year=end_year,
+            max_pages=max_pages,
+        )
+        records = un_population_records(pages)
+        inserted = self.warehouse.insert_records(records)
+        return self._finish(
+            source_id="un_wpp",
+            started_at=started_at,
+            rows_seen=sum(len(page.rows) for page in pages),
+            rows_inserted=inserted,
+            snapshots=len({
+                page.snapshot_checksum
+                for page in pages
+                if page.snapshot_checksum
+            }),
+            details={
+                "indicators": indicators,
+                "locations": locations,
+                "start_year": start_year,
+                "end_year": end_year,
+                "pages": len(pages),
             },
         )
