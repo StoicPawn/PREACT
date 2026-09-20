@@ -1,0 +1,22 @@
+[Unit]
+Description=PREACT Shared External Data Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_HOST=127.0.0.1
+Environment=SHARED_DATA_HUB_PORT=8787
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
+EnvironmentFile=-/etc/preact/data-hub.env
+ExecStart=/opt/preact/.venv/bin/python scripts/run_shared_data_hub.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

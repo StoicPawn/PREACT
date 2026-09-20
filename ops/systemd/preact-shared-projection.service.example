@@ -1,0 +1,16 @@
+[Unit]
+Description=Project shared raw snapshots into PREACT evidence stores
+After=preact-shared-data-hub.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
+Environment=PREACT_HISTORY_DB=/var/lib/preact/history/preact_history.duckdb
+Environment=PREACT_DOCUMENT_DB=/var/lib/preact/history/preact_documents.duckdb
+Environment=PREACT_PROJECTION_LEDGER=/var/lib/preact/history/projection_ledger.sqlite3
+ExecStart=/opt/preact/.venv/bin/python scripts/project_shared_snapshots.py
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077

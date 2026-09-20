@@ -1,0 +1,14 @@
+[Unit]
+Description=PREACT Shared Data Hub GDELT realtime collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
+ExecStart=/opt/preact/.venv/bin/python scripts/poll_gdelt_realtime.py
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
