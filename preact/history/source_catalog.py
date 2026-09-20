@@ -117,8 +117,12 @@ SOURCES: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         "cow", "Correlates of War", ("war", "alliances", "diplomacy", "trade", "capabilities", "borders"),
-        "mostly 1816 onward", "versioned releases", "open", "native_vintages",
+        "mostly 1816 onward", "versioned releases", "noncommercial", "native_vintages",
         "core", "https://correlatesofwar.org/data-sets/",
+        licence_note=(
+            "COW terms prohibit commercial use and third-party redistribution "
+            "without written permission; dataset-specific citation is required."
+        ),
         notes="Use sub-datasets separately: wars, MIDs, alliances, NMC, diplomatic exchange, trade, IGO, contiguity, territorial change."
     ),
     SourceSpec(
