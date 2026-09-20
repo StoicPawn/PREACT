@@ -234,8 +234,12 @@ SOURCES: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         "powell_thyne_coups", "Powell & Thyne Coup Dataset", ("coups", "leadership_change"),
-        "1950-present", "irregular updates", "open", "native_vintages", "high",
+        "1950-present", "irregular updates", "mixed_rights", "native_vintages", "high",
         "https://jonathanmpowell.com/coups/",
+        licence_note=(
+            "Publicly downloadable academic dataset; no broad open-content licence "
+            "is assumed. Preserve citation, provider link and exact vintage."
+        ),
         notes="Current and archived published versions are available."
     ),
     SourceSpec(
