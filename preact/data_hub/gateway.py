@@ -141,6 +141,79 @@ class SharedProviderGateway:
         finally:
             lock.release()
 
+    def get_text(
+        self,
+        *,
+        source_id: str,
+        operation: str,
+        url: str,
+        params: Mapping[str, Any],
+        ttl_seconds: int,
+        minimum_interval_seconds: float = 0.0,
+        timeout_seconds: float = 30.0,
+        headers: Mapping[str, str] | None = None,
+        encoding: str = "utf-8",
+    ) -> ProviderResponse:
+        """Fetch text/XML once, snapshot raw bytes, and cache decoded text."""
+
+        fingerprint = self.fingerprint(source_id, operation, params, url=url)
+        cached = self._read_cache(
+            source_id=source_id,
+            operation=operation,
+            fingerprint=fingerprint,
+            ttl_seconds=ttl_seconds,
+        )
+        if cached is not None:
+            return cached
+
+        request_lock = self._request_locks.setdefault(fingerprint, threading.Lock())
+        with request_lock:
+            cached = self._read_cache(
+                source_id=source_id,
+                operation=operation,
+                fingerprint=fingerprint,
+                ttl_seconds=ttl_seconds,
+            )
+            if cached is not None:
+                return cached
+
+            self._throttle(source_id, minimum_interval_seconds)
+            query = urlencode([(str(k), str(v)) for k, v in params.items()])
+            request_url = f"{url}?{query}" if query else url
+            request_headers = {
+                "User-Agent": self.user_agent,
+                "Accept": "application/xml,text/xml,application/rss+xml,text/plain,*/*",
+            }
+            request_headers.update(dict(headers or {}))
+            request = Request(request_url, headers=request_headers)
+
+            with urlopen(request, timeout=float(timeout_seconds)) as http_response:
+                payload_bytes = http_response.read()
+                content_type = http_response.headers.get("Content-Type")
+
+            retrieved_at = datetime.now(timezone.utc)
+            snapshot = self.snapshot_store.put(
+                source_id=source_id,
+                payload=payload_bytes,
+                retrieved_at=retrieved_at,
+                source_url=request_url,
+                content_type=content_type,
+                operation=operation,
+                request=dict(params),
+            )
+            payload = payload_bytes.decode(encoding, errors="replace")
+            response = ProviderResponse(
+                source_id=source_id,
+                operation=operation,
+                payload=payload,
+                retrieved_at=retrieved_at,
+                cached=False,
+                request_fingerprint=fingerprint,
+                snapshot_checksum=snapshot.checksum_sha256,
+            )
+            self._write_cache(response)
+            return response
+
     def get_json(
         self,
         *,
