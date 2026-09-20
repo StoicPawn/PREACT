@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Mapping
 
 from preact.data_hub.gdelt_realtime import parse_event_zip
 from preact.data_hub.projection_ledger import ProjectionLedger
@@ -25,11 +26,13 @@ class SharedSnapshotProjector:
         ledger: ProjectionLedger,
         history: HistoricalWarehouse,
         documents: HistoricalDocumentStore,
+        fips_to_iso3: Mapping[str, str] | None = None,
     ) -> None:
         self.snapshot_store = snapshot_store
         self.ledger = ledger
         self.history = history
         self.documents = documents
+        self.fips_to_iso3 = dict(fips_to_iso3 or {})
 
     def project_gdelt_snapshot(self, snapshot: SnapshotMetadata) -> dict[str, int]:
         if snapshot.source_id != "gdelt":
@@ -45,6 +48,7 @@ class SharedSnapshotProjector:
                 rows,
                 acquired_at=snapshot.retrieved_at,
                 snapshot_checksum=snapshot.checksum_sha256,
+                fips_to_iso3=self.fips_to_iso3,
             )
             inserted = self.history.insert_records(records)
             self.ledger.mark(consumer, snapshot.snapshot_id)
