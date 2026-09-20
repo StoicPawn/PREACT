@@ -69,14 +69,19 @@ def powell_thyne_records(
             if ccode
             else f"powell_country:{country.casefold().replace(' ', '-')}"
         )
-        material = (
-            release.release_id,
+        logical_material = (
             entity_id,
             event_date.isoformat(),
             coup_code,
-            tuple(sorted((str(k), str(v)) for k, v in row.items())),
+            country,
         )
-        digest = sha256(repr(material).encode("utf-8")).hexdigest()
+        logical_digest = sha256(
+            repr(logical_material).encode("utf-8")
+        ).hexdigest()
+        logical_event_id = f"powell_thyne:{logical_digest}"
+        vintage_digest = sha256(
+            f"{release.release_id}|{logical_event_id}".encode("utf-8")
+        ).hexdigest()
         common = dict(
             entity_id=entity_id,
             valid_from=event_date,
@@ -84,7 +89,7 @@ def powell_thyne_records(
             evidence_class=EvidenceClass.OBSERVATION,
             provenance=Provenance(
                 source="powell_thyne_coups",
-                source_ref=f"{release.release_id}:{digest}",
+                source_ref=logical_event_id,
                 retrieved_at=retrieved_at,
                 dataset_version=release.release_id,
                 licence="provider page; preserve citation and vintage",
@@ -102,11 +107,12 @@ def powell_thyne_records(
                 "release_id": release.release_id,
                 "provisional_release": release.provisional,
                 "snapshot_checksum": snapshot_checksum,
+                "logical_event_id": logical_event_id,
             },
         )
         output.append(
             TemporalRecord(
-                record_id=f"powell_thyne:coup_attempt:{digest}",
+                record_id=f"powell_thyne:coup_attempt:{release.release_id}:{vintage_digest}",
                 variable="event:coup_attempt",
                 value=1,
                 **common,
@@ -115,7 +121,7 @@ def powell_thyne_records(
         if coup_code == 2:
             output.append(
                 TemporalRecord(
-                    record_id=f"powell_thyne:coup_success:{digest}",
+                    record_id=f"powell_thyne:coup_success:{release.release_id}:{vintage_digest}",
                     variable="event:coup_success",
                     value=1,
                     **common,
