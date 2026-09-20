@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from preact.feature_store.panel import build_relation_risk_panel
+from preact.feature_store.event_panel import build_event_risk_panel
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
 from preact.history.warehouse import HistoricalWarehouse
@@ -67,6 +68,12 @@ def main() -> None:
     parser.add_argument(
         "--target-relation",
         default="militarized_interstate_dispute",
+        help="Relation target used when --target-event is omitted.",
+    )
+    parser.add_argument(
+        "--target-event",
+        default=None,
+        help="Country/polity event target such as event:coup_attempt.",
     )
     parser.add_argument(
         "--knowledge-mode",
@@ -87,11 +94,16 @@ def main() -> None:
 
     history = HistoricalWarehouse(args.history_db)
     graph = HistoricalGraphStore(args.graph_db)
-    entities = tuple(args.entity) or tuple(
-        graph.list_entities(relation_type=args.target_relation)
-    )
+    target_name = args.target_event or args.target_relation
+    target_kind = "event" if args.target_event else "relation"
+    if args.entity:
+        entities = tuple(args.entity)
+    elif target_kind == "event":
+        entities = tuple(history.list_entities(variable=target_name))
+    else:
+        entities = tuple(graph.list_entities(relation_type=target_name))
     if not entities:
-        raise SystemExit("No entities available for target relation")
+        raise SystemExit(f"No entities available for {target_kind} target {target_name}")
 
     start, end = _dt(args.start), _dt(args.end)
     if end < start:
@@ -100,18 +112,35 @@ def main() -> None:
     variables = tuple(args.feature) or DEFAULT_FEATURES
     mode = KnowledgeMode(args.knowledge_mode)
 
-    dataset = build_relation_risk_panel(
-        warehouse=history,
-        graph=graph,
-        entity_ids=entities,
-        cutoffs=cutoffs,
-        feature_variables=variables,
-        target_relation_type=args.target_relation,
-        horizon_days=args.horizon_days,
-        graph_recent_days=max(365, args.horizon_days),
-        knowledge_mode=mode,
-        include_event_history=True,
-    )
+    if target_kind == "event":
+        dataset = build_event_risk_panel(
+            warehouse=history,
+            graph=graph,
+            entity_ids=entities,
+            cutoffs=cutoffs,
+            feature_variables=variables,
+            target_variable=target_name,
+            horizon_days=args.horizon_days,
+            graph_recent_days=max(365, args.horizon_days),
+            knowledge_mode=mode,
+            include_relation_history=True,
+            include_temporal_dynamics=True,
+            include_target_history=True,
+        )
+    else:
+        dataset = build_relation_risk_panel(
+            warehouse=history,
+            graph=graph,
+            entity_ids=entities,
+            cutoffs=cutoffs,
+            feature_variables=variables,
+            target_relation_type=target_name,
+            horizon_days=args.horizon_days,
+            graph_recent_days=max(365, args.horizon_days),
+            knowledge_mode=mode,
+            include_event_history=True,
+            include_temporal_dynamics=True,
+        )
     if dataset.features.empty:
         raise SystemExit("No panel features produced")
 
@@ -244,7 +273,7 @@ def main() -> None:
     manifest = build_manifest(
         features,
         dataset.target,
-        target_name=args.target_relation,
+        target_name=target_name,
         horizon_days=args.horizon_days,
         knowledge_mode=mode.value,
         metadata={
@@ -252,6 +281,8 @@ def main() -> None:
             "graph_db": args.graph_db,
             "step_days": args.step_days,
             "entities_requested": len(entities),
+            "target_kind": target_kind,
+            "target_name": target_name,
         },
     )
 
