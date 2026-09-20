@@ -130,3 +130,58 @@ class HistoricalWarehouse:
             )
             columns = [item[0] for item in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+    def latest_state_as_of(
+        self,
+        *,
+        cutoff: datetime,
+        valid_at: datetime | None = None,
+        entity_id: str | None = None,
+        variables: Iterable[str] | None = None,
+    ) -> list[dict]:
+        """Return one latest-known vintage per entity/variable/valid interval.
+
+        The evidence ledger remains append-only. This view is for model inputs and
+        Atlas state cards where multiple revisions of the same observation must not
+        be counted as independent evidence.
+        """
+
+        world_time = valid_at or cutoff
+        clauses = [
+            "known_at <= ?",
+            "valid_from <= ?",
+            "(valid_to IS NULL OR ? < valid_to)",
+        ]
+        params: list[object] = [cutoff, world_time, world_time]
+
+        if entity_id:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+
+        selected = tuple(str(v) for v in (variables or ()) if str(v))
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            clauses.append(f"variable IN ({placeholders})")
+            params.extend(selected)
+
+        sql = """
+            SELECT * EXCLUDE (rn)
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY entity_id, variable, valid_from,
+                                        COALESCE(valid_to, TIMESTAMPTZ '9999-12-31')
+                           ORDER BY known_at DESC, retrieved_at DESC, record_id DESC
+                       ) AS rn
+                FROM temporal_records
+                WHERE {where}
+            )
+            WHERE rn = 1
+            ORDER BY entity_id, variable, valid_from
+        """.format(where=" AND ".join(clauses))
+
+        with self.connect() as conn:
+            cursor = conn.execute(sql, params)
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
