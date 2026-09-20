@@ -26,6 +26,9 @@ from preact.history.connectors.ucdp import UCDPConnector
 from preact.history.connectors.unhcr import UNHCRConnector
 from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.snapshot_store import SourceSnapshotStore
+from preact.history.ingestion_state import IngestionStateStore
+from preact.history.warehouse import HistoricalWarehouse
+from preact.history.wave1_pipeline import Wave1IngestionPipeline
 
 
 @dataclass(frozen=True)
@@ -43,11 +46,22 @@ class Wave1Runner:
         self,
         *,
         hub_root: str | Path = "data/shared_hub",
+        history_db: str | Path = "data/history/preact_history.duckdb",
+        state_db: str | Path = "data/history/ingestion_state.sqlite3",
         gateway: SharedProviderGateway | None = None,
+        warehouse: HistoricalWarehouse | None = None,
+        state: IngestionStateStore | None = None,
     ) -> None:
         self.hub_root = Path(hub_root)
         self.snapshot_store = SourceSnapshotStore(self.hub_root / "snapshots")
         self.gateway = gateway or SharedProviderGateway(self.hub_root)
+        self.warehouse = warehouse or HistoricalWarehouse(history_db)
+        self.state = state or IngestionStateStore(state_db)
+        self.pipeline = Wave1IngestionPipeline(
+            gateway=self.gateway,
+            warehouse=self.warehouse,
+            state=self.state,
+        )
 
     def run_geonames(self) -> SourceRun:
         connector = GeoNamesCountryInfoConnector(
@@ -157,7 +171,7 @@ class Wave1Runner:
     ) -> SourceRun:
         end_year = end_year or datetime.now(timezone.utc).year
         try:
-            pages = UNPopulationConnector(self.gateway).fetch_pages(
+            result = self.pipeline.ingest_un_population(
                 indicators=indicators,
                 locations=locations,
                 start_year=start_year,
@@ -181,14 +195,11 @@ class Wave1Runner:
         return SourceRun(
             "un_wpp",
             "success",
-            rows=sum(len(page.rows) for page in pages),
-            snapshots=len(pages),
+            rows=int(result["rows_seen"]),
+            snapshots=int(result["snapshots"]),
             metadata={
-                "revision": "WPP 2024 / current Data Portal API",
-                "indicators": indicators,
-                "locations": locations,
-                "start_year": start_year,
-                "end_year": end_year,
+                **dict(result["details"]),
+                "rows_inserted": int(result["rows_inserted"]),
             },
         )
 
@@ -205,27 +216,33 @@ class Wave1Runner:
         end_year: int | None = None,
     ) -> SourceRun:
         end_year = end_year or datetime.now(timezone.utc).year
-        connector = WorldBankIndicatorConnector(self.gateway)
-        rows = []
+        inserted = 0
+        rows = 0
+        snapshots = 0
+        details: list[dict[str, Any]] = []
         for indicator in indicators:
-            rows.extend(
-                connector.fetch(
-                    country=country,
-                    indicator=indicator,
-                    start_year=start_year,
-                    end_year=end_year,
-                )
+            result = self.pipeline.ingest_world_bank(
+                country=country,
+                indicator=indicator,
+                start_year=start_year,
+                end_year=end_year,
             )
+            inserted += int(result["rows_inserted"])
+            rows += int(result["rows_seen"])
+            snapshots += int(result["snapshots"])
+            details.append(dict(result["details"]))
         return SourceRun(
             "world_bank",
             "success",
-            rows=len(rows),
-            snapshots=len(indicators),
+            rows=rows,
+            snapshots=snapshots,
             metadata={
                 "country": country,
                 "indicators": list(indicators),
                 "start_year": start_year,
                 "end_year": end_year,
+                "rows_inserted": inserted,
+                "pipeline_runs": details,
             },
         )
 
@@ -236,14 +253,15 @@ class Wave1Runner:
         resource: str = "gedevents",
         filters: dict[str, Any] | None = None,
         max_pages: int | None = None,
+        version_release_at: datetime | None = None,
     ) -> SourceRun:
         try:
-            connector = UCDPConnector(self.gateway)
-            pages = connector.fetch_pages(
+            result = self.pipeline.ingest_ucdp(
                 resource=resource,
                 version=version,
                 filters=filters,
                 max_pages=max_pages,
+                version_release_at=version_release_at,
             )
         except RuntimeError as exc:
             if "UCDP_API_TOKEN" in str(exc):
@@ -257,9 +275,12 @@ class Wave1Runner:
         return SourceRun(
             "ucdp",
             "success",
-            rows=sum(len(page.rows) for page in pages),
-            snapshots=len(pages),
-            metadata={"version": version, "resource": resource},
+            rows=int(result["rows_seen"]),
+            snapshots=int(result["snapshots"]),
+            metadata={
+                **dict(result["details"]),
+                "rows_inserted": int(result["rows_inserted"]),
+            },
         )
 
     def run_unhcr(
@@ -270,7 +291,7 @@ class Wave1Runner:
         max_pages: int | None = None,
     ) -> SourceRun:
         year_to = year_to or datetime.now(timezone.utc).year
-        pages = UNHCRConnector(self.gateway).fetch_pages(
+        result = self.pipeline.ingest_unhcr(
             year_from=year_from,
             year_to=year_to,
             include_all_origins=True,
@@ -280,9 +301,12 @@ class Wave1Runner:
         return SourceRun(
             "unhcr",
             "success",
-            rows=sum(len(page.rows) for page in pages),
-            snapshots=len(pages),
-            metadata={"year_from": year_from, "year_to": year_to},
+            rows=int(result["rows_seen"]),
+            snapshots=int(result["snapshots"]),
+            metadata={
+                **dict(result["details"]),
+                "rows_inserted": int(result["rows_inserted"]),
+            },
         )
 
     @staticmethod
