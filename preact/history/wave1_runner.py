@@ -14,6 +14,10 @@ from typing import Any
 from preact.data_hub.gateway import SharedProviderGateway
 from preact.history.connectors.base import BulkFileConnector
 from preact.history.connectors.cow import COWStateSystemConnector
+from preact.history.connectors.cshapes import CShapesConnector
+from preact.history.connectors.maddison import Maddison2023Connector
+from preact.history.connectors.sipri import SIPRIMilitaryExpenditureConnector
+from preact.history.connectors.un_population import UNPopulationConnector
 from preact.history.connectors.geonames import (
     CountryCodeMap,
     GeoNamesCountryInfoConnector,
@@ -80,6 +84,111 @@ class Wave1Runner:
                 "strict_replay_eligible_before_retrieval": (
                     acquired.replay_eligible_before_retrieval
                 ),
+            },
+        )
+
+    def run_cshapes(self) -> SourceRun:
+        connector = CShapesConnector(
+            BulkFileConnector("cshapes", self.snapshot_store)
+        )
+        acquired = connector.acquire()
+        rows = connector.parse_rows(acquired.payload)
+        return SourceRun(
+            "cshapes",
+            "success",
+            rows=len(rows),
+            snapshots=1,
+            metadata={
+                "release": "CShapes 2.0",
+                "snapshot_checksum": acquired.snapshot.checksum_sha256,
+                "strict_replay_eligible_before_retrieval": (
+                    acquired.replay_eligible_before_retrieval
+                ),
+            },
+        )
+
+    def run_maddison(self) -> SourceRun:
+        connector = Maddison2023Connector(
+            self.gateway,
+            BulkFileConnector("maddison", self.snapshot_store),
+        )
+        acquired = connector.acquire()
+        return SourceRun(
+            "maddison",
+            "success",
+            rows=0,
+            snapshots=1,
+            metadata={
+                "release": acquired.snapshot.source_release,
+                "snapshot_checksum": acquired.snapshot.checksum_sha256,
+                "strict_replay_eligible_before_retrieval": (
+                    acquired.replay_eligible_before_retrieval
+                ),
+            },
+        )
+
+    def run_sipri(self) -> SourceRun:
+        connector = SIPRIMilitaryExpenditureConnector(
+            BulkFileConnector("sipri", self.snapshot_store)
+        )
+        acquired = connector.acquire()
+        return SourceRun(
+            "sipri",
+            "success",
+            rows=0,
+            snapshots=1,
+            metadata={
+                "release": acquired.snapshot.source_release,
+                "snapshot_checksum": acquired.snapshot.checksum_sha256,
+                "strict_replay_eligible_before_retrieval": (
+                    acquired.replay_eligible_before_retrieval
+                ),
+            },
+        )
+
+    def run_un_population(
+        self,
+        *,
+        indicators: str = "49",
+        locations: str = "900",
+        start_year: int = 1950,
+        end_year: int | None = None,
+        max_pages: int | None = None,
+    ) -> SourceRun:
+        end_year = end_year or datetime.now(timezone.utc).year
+        try:
+            pages = UNPopulationConnector(self.gateway).fetch_pages(
+                indicators=indicators,
+                locations=locations,
+                start_year=start_year,
+                end_year=end_year,
+                max_pages=max_pages,
+            )
+        except RuntimeError as exc:
+            if "UN_POPULATION_API_TOKEN" in str(exc):
+                return SourceRun(
+                    "un_wpp",
+                    "requires_registration",
+                    message=str(exc),
+                    metadata={
+                        "indicators": indicators,
+                        "locations": locations,
+                        "start_year": start_year,
+                        "end_year": end_year,
+                    },
+                )
+            raise
+        return SourceRun(
+            "un_wpp",
+            "success",
+            rows=sum(len(page.rows) for page in pages),
+            snapshots=len(pages),
+            metadata={
+                "revision": "WPP 2024 / current Data Portal API",
+                "indicators": indicators,
+                "locations": locations,
+                "start_year": start_year,
+                "end_year": end_year,
             },
         )
 
@@ -182,12 +291,10 @@ class Wave1Runner:
             SourceRun(
                 "vdem",
                 "requires_registration",
-                message="Download/version access must be configured before automated ingestion.",
-            ),
-            SourceRun(
-                "sipri",
-                "manual_release",
-                message="Archive the exact published workbook/release; do not silently replace revisions.",
+                message=(
+                    "V-Dem download form/registration must be configured before "
+                    "automated ingestion. Always pin the dataset release version."
+                ),
             ),
         ]
 
@@ -200,12 +307,16 @@ class Wave1Runner:
         calls = [
             ("geonames", self.run_geonames),
             ("cow", self.run_cow),
+            ("cshapes", self.run_cshapes),
+            ("maddison", self.run_maddison),
+            ("sipri", self.run_sipri),
         ]
         if not lightweight:
             calls.extend(
                 [
                     ("world_bank", self.run_world_bank),
                     ("unhcr", self.run_unhcr),
+                    ("un_wpp", self.run_un_population),
                 ]
             )
 
