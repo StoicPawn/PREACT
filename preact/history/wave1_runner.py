@@ -14,6 +14,7 @@ from typing import Any
 from preact.data_hub.gateway import SharedProviderGateway
 from preact.history.connectors.base import BulkFileConnector
 from preact.history.connectors.cow import COWStateSystemConnector
+from preact.history.connectors.cow_network import COWNetworkConnector
 from preact.history.connectors.cshapes import CShapesConnector
 from preact.history.connectors.maddison import Maddison2023Connector
 from preact.history.connectors.sipri import SIPRIMilitaryExpenditureConnector
@@ -28,7 +29,14 @@ from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.history.ingestion_state import IngestionStateStore
 from preact.history.warehouse import HistoricalWarehouse
+from preact.history.graph_store import HistoricalGraphStore
 from preact.history.wave1_pipeline import Wave1IngestionPipeline
+from preact.projections.cow_network import (
+    cow_alliance_relations,
+    cow_contiguity_relations,
+    cow_mid_relations,
+    cow_nmc_records,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,7 @@ class Wave1Runner:
         hub_root: str | Path = "data/shared_hub",
         history_db: str | Path = "data/history/preact_history.duckdb",
         state_db: str | Path = "data/history/ingestion_state.sqlite3",
+        graph_db: str | Path = "data/history/preact_graph.duckdb",
         gateway: SharedProviderGateway | None = None,
         warehouse: HistoricalWarehouse | None = None,
         state: IngestionStateStore | None = None,
@@ -57,6 +66,7 @@ class Wave1Runner:
         self.gateway = gateway or SharedProviderGateway(self.hub_root)
         self.warehouse = warehouse or HistoricalWarehouse(history_db)
         self.state = state or IngestionStateStore(state_db)
+        self.graph = HistoricalGraphStore(graph_db)
         self.pipeline = Wave1IngestionPipeline(
             gateway=self.gateway,
             warehouse=self.warehouse,
@@ -98,6 +108,71 @@ class Wave1Runner:
                 "strict_replay_eligible_before_retrieval": (
                     acquired.replay_eligible_before_retrieval
                 ),
+            },
+        )
+
+    def run_cow_network(self) -> SourceRun:
+        connector = COWNetworkConnector(
+            BulkFileConnector("cow", self.snapshot_store)
+        )
+        acquired_alliances = connector.acquire_alliances()
+        acquired_contiguity = connector.acquire_contiguity()
+        acquired_mids = connector.acquire_dyadic_mids()
+        acquired_nmc = connector.acquire_nmc()
+
+        known_alliances = acquired_alliances.retrieved_at
+        known_contiguity = acquired_contiguity.retrieved_at
+        known_mids = acquired_mids.retrieved_at
+        known_nmc = acquired_nmc.retrieved_at
+
+        alliance_rows = connector.parse_alliances(acquired_alliances.payload)
+        contiguity_rows = connector.parse_contiguity(acquired_contiguity.payload)
+        mid_rows = connector.parse_dyadic_mids(acquired_mids.payload)
+        nmc_rows = connector.parse_nmc(acquired_nmc.payload)
+
+        relations = [
+            *cow_alliance_relations(
+                alliance_rows,
+                known_at=known_alliances,
+                retrieved_at=acquired_alliances.retrieved_at,
+            ),
+            *cow_contiguity_relations(
+                contiguity_rows,
+                known_at=known_contiguity,
+                retrieved_at=acquired_contiguity.retrieved_at,
+            ),
+            *cow_mid_relations(
+                mid_rows,
+                known_at=known_mids,
+                retrieved_at=acquired_mids.retrieved_at,
+            ),
+        ]
+        inserted_relations = self.graph.insert(relations)
+        nmc_records = cow_nmc_records(
+            nmc_rows,
+            known_at=known_nmc,
+            retrieved_at=acquired_nmc.retrieved_at,
+        )
+        inserted_records = self.warehouse.insert_records(nmc_records)
+
+        return SourceRun(
+            "cow_network",
+            "success",
+            rows=len(relations) + len(nmc_records),
+            snapshots=4,
+            metadata={
+                "relations_inserted": inserted_relations,
+                "nmc_records_inserted": inserted_records,
+                "alliances_rows": len(alliance_rows),
+                "contiguity_rows": len(contiguity_rows),
+                "mid_rows": len(mid_rows),
+                "nmc_rows": len(nmc_rows),
+                "releases": [
+                    acquired_alliances.snapshot.source_release,
+                    acquired_contiguity.snapshot.source_release,
+                    acquired_mids.snapshot.source_release,
+                    acquired_nmc.snapshot.source_release,
+                ],
             },
         )
 
@@ -331,6 +406,7 @@ class Wave1Runner:
         calls = [
             ("geonames", self.run_geonames),
             ("cow", self.run_cow),
+            ("cow_network", self.run_cow_network),
             ("cshapes", self.run_cshapes),
             ("maddison", self.run_maddison),
             ("sipri", self.run_sipri),
