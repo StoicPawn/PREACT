@@ -10,6 +10,7 @@ from typing import Iterable
 import duckdb
 
 from .relations import HistoricalRelation
+from .schema import KnowledgeMode
 
 
 class HistoricalGraphStore:
@@ -88,14 +89,17 @@ class HistoricalGraphStore:
         valid_at: datetime | None = None,
         entity_id: str | None = None,
         relation_type: str | None = None,
+        knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     ) -> list[dict]:
         world_time = valid_at or cutoff
         clauses = [
-            "known_at <= ?",
             "valid_from <= ?",
             "(valid_to IS NULL OR ? < valid_to)",
         ]
-        params: list[object] = [cutoff, world_time, world_time]
+        params: list[object] = [world_time, world_time]
+        if knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN:
+            clauses.insert(0, "known_at <= ?")
+            params.insert(0, cutoff)
         if entity_id:
             clauses.append("(subject_entity_id = ? OR object_entity_id = ?)")
             params.extend([entity_id, entity_id])
