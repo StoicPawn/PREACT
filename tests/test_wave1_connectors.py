@@ -72,3 +72,21 @@ def test_cow_state_rows_create_temporal_entities() -> None:
     assert entities[0].valid_from.date().isoformat() == "1900-01-02"
     assert entities[0].valid_to.date().isoformat() == "1905-03-05"
     assert any(code.namespace == "cow_ccode" and code.value == "999" for code in entities[0].codes)
+
+
+def test_cow_release_boundary_is_right_censored_not_state_end() -> None:
+    csv_text = (
+        "StateAbb,CCode,StateNme,StYear,StMonth,StDay,EndYear,EndMonth,EndDay,Version\n"
+        "OLD,1,Old State,1900,1,1,1950,1,1,2024\n"
+        "CUR,2,Current State,1950,1,2,2024,12,31,2024\n"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("states2024.csv", csv_text)
+    entities = COWStateSystemConnector.to_entities(
+        COWStateSystemConnector.parse_rows(buffer.getvalue())
+    )
+    by_name = {entity.name: entity for entity in entities}
+    assert by_name["Old State"].valid_to.date().isoformat() == "1950-01-02"
+    assert by_name["Current State"].valid_to is None
+    assert by_name["Current State"].attributes["right_censored_at_release"] is True
