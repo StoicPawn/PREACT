@@ -37,3 +37,21 @@ def test_gateway_cache_round_trip(tmp_path) -> None:
     assert cached.cached is True
     assert cached.payload["articles"][0]["title"] == "Example"
     assert cached.snapshot_checksum == "abc"
+
+
+def test_gateway_fingerprint_distinguishes_same_params_on_different_urls(tmp_path) -> None:
+    gateway = SharedProviderGateway(tmp_path)
+    params = {"date": "2020:2024", "format": "json"}
+    italy = gateway.fingerprint(
+        "world_bank",
+        "indicator",
+        params,
+        url="https://api.worldbank.org/v2/country/ITA/indicator/X",
+    )
+    france = gateway.fingerprint(
+        "world_bank",
+        "indicator",
+        params,
+        url="https://api.worldbank.org/v2/country/FRA/indicator/X",
+    )
+    assert italy != france
