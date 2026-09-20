@@ -231,6 +231,7 @@ def main() -> None:
         knowledge_mode=KnowledgeMode.RETROSPECTIVE,
         include_event_history=True,
         include_temporal_dynamics=True,
+        outcome_observed_through=datetime(2014, 12, 31, tzinfo=timezone.utc),
     )
     mids_result = evaluate_panel(
         relation_panel.features,
@@ -262,6 +263,7 @@ def main() -> None:
             horizon_days=365,
             graph_recent_days=1825,
             knowledge_mode=KnowledgeMode.RETROSPECTIVE,
+            outcome_observed_through=datetime(2026, 8, 29, tzinfo=timezone.utc),
         )
         coup_result = evaluate_panel(
             coup_panel.features,
