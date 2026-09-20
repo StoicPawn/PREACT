@@ -87,6 +87,11 @@ def main() -> None:
     parser.add_argument("--test-dates-per-fold", type=int, default=5)
     parser.add_argument("--bootstrap-samples", type=int, default=1000)
     parser.add_argument("--output-dir", default="data/experiments/predictive")
+    parser.add_argument(
+        "--outcome-observed-through",
+        default=None,
+        help="Last date with complete outcome coverage; later censored labels become NA.",
+    )
     parser.add_argument("--skip-geographic-stress", action="store_true")
     parser.add_argument("--skip-placebo", action="store_true")
     parser.add_argument("--run-ablations", action="store_true")
@@ -111,6 +116,11 @@ def main() -> None:
     cutoffs = _cutoffs(start, end, args.step_days)
     variables = tuple(args.feature) or DEFAULT_FEATURES
     mode = KnowledgeMode(args.knowledge_mode)
+    outcome_observed_through = (
+        _dt(args.outcome_observed_through)
+        if args.outcome_observed_through
+        else None
+    )
 
     if target_kind == "event":
         dataset = build_event_risk_panel(
@@ -126,6 +136,7 @@ def main() -> None:
             include_relation_history=True,
             include_temporal_dynamics=True,
             include_target_history=True,
+            outcome_observed_through=outcome_observed_through,
         )
     else:
         dataset = build_relation_risk_panel(
@@ -140,6 +151,7 @@ def main() -> None:
             knowledge_mode=mode,
             include_event_history=True,
             include_temporal_dynamics=True,
+            outcome_observed_through=outcome_observed_through,
         )
     if dataset.features.empty:
         raise SystemExit("No panel features produced")
@@ -283,6 +295,11 @@ def main() -> None:
             "entities_requested": len(entities),
             "target_kind": target_kind,
             "target_name": target_name,
+            "outcome_observed_through": (
+                outcome_observed_through.isoformat()
+                if outcome_observed_through
+                else None
+            ),
         },
     )
 
