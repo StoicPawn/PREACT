@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll GDELT 2.0 raw stream every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=preact-gdelt-realtime.service
+
+[Install]
+WantedBy=timers.target
