@@ -22,6 +22,7 @@ class SnapshotMetadata:
     source_release: Optional[str] = None
     content_type: Optional[str] = None
     licence_reference: Optional[str] = None
+    notes: Optional[str] = None
     request: Mapping[str, Any] = field(default_factory=dict)
 
     def as_json_dict(self) -> dict[str, Any]:
@@ -59,6 +60,7 @@ class SourceSnapshotStore:
         source_release: str | None = None,
         content_type: str | None = None,
         licence_reference: str | None = None,
+        notes: str | None = None,
         request: Mapping[str, Any] | None = None,
     ) -> SnapshotMetadata:
         """Persist raw bytes and an immutable acquisition record."""
@@ -90,6 +92,7 @@ class SourceSnapshotStore:
             source_release=source_release,
             content_type=content_type,
             licence_reference=licence_reference,
+            notes=notes,
             request=dict(request or {}),
         )
 
