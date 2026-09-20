@@ -20,6 +20,7 @@ from preact.history.replay import (
 )
 from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
 from preact.history.warehouse import HistoricalWarehouse
+from preact.history.graph_store import HistoricalGraphStore
 from preact.models.replay_baseline import (
     ReplayBacktestResult,
     purged_walk_forward_backtest,
@@ -32,13 +33,19 @@ class AtlasState:
     knowledge_cutoff: datetime
     valid_at: datetime
     records: tuple[dict, ...]
+    relations: tuple[dict, ...] = ()
 
 
 class HistoricalAtlasService:
     """Read a historical world state with explicit knowledge and valid-time clocks."""
 
-    def __init__(self, warehouse: HistoricalWarehouse) -> None:
+    def __init__(
+        self,
+        warehouse: HistoricalWarehouse,
+        graph: HistoricalGraphStore | None = None,
+    ) -> None:
         self.warehouse = warehouse
+        self.graph = graph
 
     def state(
         self,
@@ -55,11 +62,21 @@ class HistoricalAtlasService:
             entity_id=entity_id,
             variable=variable,
         )
+        relations = (
+            self.graph.as_of(
+                cutoff=knowledge_cutoff,
+                valid_at=world_time,
+                entity_id=entity_id,
+            )
+            if self.graph is not None
+            else []
+        )
         return AtlasState(
             entity_id=entity_id,
             knowledge_cutoff=knowledge_cutoff,
             valid_at=world_time,
             records=tuple(rows),
+            relations=tuple(relations),
         )
 
 
