@@ -1,0 +1,48 @@
+name: public-predictive-benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/predictive-research-v1
+    paths:
+      - .github/workflows/public-predictive-benchmark.yml
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PREACT
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run public predictive benchmark
+        id: benchmark
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python scripts/run_public_predictive_benchmark.py 2>&1 | tee public_predictive_benchmark.log
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-predictive-benchmark
+          path: |
+            data/public_predictive_benchmark/public_benchmark_report.json
+            public_predictive_benchmark.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Propagate benchmark failure
+        if: steps.benchmark.outcome == 'failure'
+        run: exit 1
