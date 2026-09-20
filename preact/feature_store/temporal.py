@@ -8,6 +8,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from preact.history.schema import KnowledgeMode
 from preact.history.warehouse import HistoricalWarehouse
 
 
@@ -32,11 +33,13 @@ def entity_feature_snapshot(
     cutoff: datetime,
     valid_at: datetime | None = None,
     variables: Iterable[str] | None = None,
+    knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
 ) -> dict[str, float]:
     rows = warehouse.latest_observations_as_of(
         cutoff=cutoff,
         entity_id=entity_id,
         variables=variables,
+        knowledge_mode=knowledge_mode,
     )
     features: dict[str, float] = {}
     for row in rows:
@@ -52,6 +55,7 @@ def entity_feature_frame(
     entity_id: str,
     cutoffs: Iterable[datetime],
     variables: Iterable[str] | None = None,
+    knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
 ) -> pd.DataFrame:
     records: list[dict[str, object]] = []
     for cutoff in sorted(cutoffs):
@@ -63,6 +67,7 @@ def entity_feature_frame(
                 cutoff=cutoff,
                 valid_at=cutoff,
                 variables=variables,
+                knowledge_mode=knowledge_mode,
             )
         )
         records.append(row)
