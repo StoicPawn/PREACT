@@ -9,6 +9,8 @@ from fastapi import FastAPI, Header, HTTPException, Query
 
 from .gateway import SharedProviderGateway
 from .gdelt import gdelt_doc_articles
+from preact.history.connectors.world_bank import WorldBankIndicatorConnector
+from preact.history.source_catalog import SOURCE_BY_ID, SOURCES
 
 ROOT = Path(os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"))
 TOKEN = os.getenv("SHARED_DATA_HUB_TOKEN", "").strip()
@@ -26,6 +28,53 @@ def _authorize(authorization: str | None) -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "shared-data-hub"}
+
+
+@app.get("/v1/sources")
+def sources(authorization: str | None = Header(default=None)) -> dict:
+    _authorize(authorization)
+    return {
+        "sources": [
+            {
+                "source_id": source.source_id,
+                "name": source.name,
+                "domains": list(source.domains),
+                "temporal_coverage": source.temporal_coverage,
+                "update_cadence": source.update_cadence,
+                "access": source.access,
+                "replay_policy": source.replay_policy,
+                "priority": source.priority,
+                "url": source.url,
+                "licence_note": source.licence_note,
+                "notes": source.notes,
+            }
+            for source in SOURCES
+        ]
+    }
+
+
+@app.get("/v1/sources/{source_id}")
+def source_detail(
+    source_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    source = SOURCE_BY_ID.get(source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="unknown source")
+    return {
+        "source_id": source.source_id,
+        "name": source.name,
+        "domains": list(source.domains),
+        "temporal_coverage": source.temporal_coverage,
+        "update_cadence": source.update_cadence,
+        "access": source.access,
+        "replay_policy": source.replay_policy,
+        "priority": source.priority,
+        "url": source.url,
+        "licence_note": source.licence_note,
+        "notes": source.notes,
+    }
 
 
 @app.get("/v1/gdelt/doc")
@@ -52,4 +101,40 @@ def gdelt_doc(
         "request_fingerprint": result.request_fingerprint,
         "snapshot_checksum": result.snapshot_checksum,
         "articles": result.payload.get("articles", []),
+    }
+
+
+@app.get("/v1/world-bank/indicator")
+def world_bank_indicator(
+    country: str = Query(..., min_length=2, max_length=12),
+    indicator: str = Query(..., min_length=2, max_length=64),
+    start_year: int = Query(..., ge=1, le=2200),
+    end_year: int = Query(..., ge=1, le=2200),
+    ttl_seconds: int = Query(86400, ge=0, le=604800),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    rows = WorldBankIndicatorConnector(gateway).fetch(
+        country=country,
+        indicator=indicator,
+        start_year=start_year,
+        end_year=end_year,
+        ttl_seconds=ttl_seconds,
+    )
+    return {
+        "source": "world_bank",
+        "country": country,
+        "indicator": indicator,
+        "observations": [
+            {
+                "country_iso3": row.country_iso3,
+                "indicator": row.indicator,
+                "year": row.year,
+                "value": row.value,
+                "retrieved_at": row.retrieved_at.isoformat(),
+                "snapshot_checksum": row.snapshot_checksum,
+                "replay_eligible_before_retrieval": row.replay_eligible_before_retrieval,
+            }
+            for row in rows
+        ],
     }
