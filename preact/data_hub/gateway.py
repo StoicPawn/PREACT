@@ -50,6 +50,7 @@ class SharedProviderGateway:
         self.snapshot_store = SourceSnapshotStore(self.root / "snapshots")
         self.user_agent = user_agent
         self._locks: dict[str, threading.Lock] = {}
+        self._request_locks: dict[str, threading.Lock] = {}
         self._last_request: dict[str, float] = {}
 
     @staticmethod
@@ -157,37 +158,52 @@ class SharedProviderGateway:
         if cached is not None:
             return cached
 
-        self._throttle(source_id, minimum_interval_seconds)
+        # Single-flight by canonical request. With the service configured as one
+        # worker, concurrent PREACT/GoldenBull calls for the same provider query
+        # collapse into one external request and one immutable snapshot.
+        request_lock = self._request_locks.setdefault(fingerprint, threading.Lock())
+        with request_lock:
+            # Another consumer may have completed the request while we waited.
+            cached = self._read_cache(
+                source_id=source_id,
+                operation=operation,
+                fingerprint=fingerprint,
+                ttl_seconds=ttl_seconds,
+            )
+            if cached is not None:
+                return cached
 
-        query = urlencode([(str(k), str(v)) for k, v in params.items()])
-        request_url = f"{url}?{query}" if query else url
-        request_headers = {"User-Agent": self.user_agent, "Accept": "application/json"}
-        request_headers.update(dict(headers or {}))
-        request = Request(request_url, headers=request_headers)
+            self._throttle(source_id, minimum_interval_seconds)
 
-        with urlopen(request, timeout=float(timeout_seconds)) as http_response:
-            payload_bytes = http_response.read()
-            content_type = http_response.headers.get("Content-Type")
+            query = urlencode([(str(k), str(v)) for k, v in params.items()])
+            request_url = f"{url}?{query}" if query else url
+            request_headers = {"User-Agent": self.user_agent, "Accept": "application/json"}
+            request_headers.update(dict(headers or {}))
+            request = Request(request_url, headers=request_headers)
 
-        retrieved_at = datetime.now(timezone.utc)
-        snapshot = self.snapshot_store.put(
-            source_id=source_id,
-            payload=payload_bytes,
-            retrieved_at=retrieved_at,
-            source_url=request_url,
-            content_type=content_type,
-            request=dict(params),
-        )
-        payload = json.loads(payload_bytes.decode("utf-8"))
+            with urlopen(request, timeout=float(timeout_seconds)) as http_response:
+                payload_bytes = http_response.read()
+                content_type = http_response.headers.get("Content-Type")
 
-        response = ProviderResponse(
-            source_id=source_id,
-            operation=operation,
-            payload=payload,
-            retrieved_at=retrieved_at,
-            cached=False,
-            request_fingerprint=fingerprint,
-            snapshot_checksum=snapshot.checksum_sha256,
-        )
-        self._write_cache(response)
-        return response
+            retrieved_at = datetime.now(timezone.utc)
+            snapshot = self.snapshot_store.put(
+                source_id=source_id,
+                payload=payload_bytes,
+                retrieved_at=retrieved_at,
+                source_url=request_url,
+                content_type=content_type,
+                request=dict(params),
+            )
+            payload = json.loads(payload_bytes.decode("utf-8"))
+
+            response = ProviderResponse(
+                source_id=source_id,
+                operation=operation,
+                payload=payload,
+                retrieved_at=retrieved_at,
+                cached=False,
+                request_fingerprint=fingerprint,
+                snapshot_checksum=snapshot.checksum_sha256,
+            )
+            self._write_cache(response)
+            return response
