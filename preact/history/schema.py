@@ -8,6 +8,13 @@ from enum import Enum
 from typing import Any, Dict, Iterable, Optional
 
 
+class KnowledgeMode(str, Enum):
+    """How point-in-time queries treat publication/knowledge time."""
+
+    STRICT_AS_KNOWN = "strict_as_known"
+    RETROSPECTIVE = "retrospective"
+
+
 class EvidenceClass(str, Enum):
     """Semantic class of a record exposed to users and models."""
 
@@ -79,6 +86,7 @@ class HistoricalQuery:
     entity_ids: tuple[str, ...] = ()
     variables: tuple[str, ...] = ()
     evidence_classes: tuple[EvidenceClass, ...] = ()
+    knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN
 
     def filter(self, records: Iterable[TemporalRecord]) -> list[TemporalRecord]:
         """Filter records according to temporal and semantic constraints."""
@@ -86,7 +94,10 @@ class HistoricalQuery:
         output: list[TemporalRecord] = []
 
         for record in records:
-            if not record.is_known_as_of(self.knowledge_cutoff):
+            if (
+                self.knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN
+                and not record.is_known_as_of(self.knowledge_cutoff)
+            ):
                 continue
             if not record.is_valid_at(valid_at):
                 continue
