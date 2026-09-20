@@ -64,6 +64,7 @@ def test_temporal_features_use_latest_vintage_known_at_each_cutoff(tmp_path) -> 
         ],
         variables=["world_bank:gdp"],
     )
-    # The feature frame asks for valid_at=cutoff. The 2020 GDP fact is no
-    # longer valid in 2021/2022, so it must not be forward-filled magically.
-    assert "world_bank:gdp" not in frame.columns or frame["world_bank:gdp"].isna().all()
+    # Reported indicators carry forward until a newer period is available, but
+    # the vintage used at each cutoff must still be the one known at that time.
+    assert frame.iloc[0]["world_bank:gdp"] == 100.0
+    assert frame.iloc[1]["world_bank:gdp"] == 101.5
