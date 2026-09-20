@@ -185,3 +185,56 @@ class HistoricalWarehouse:
             cursor = conn.execute(sql, params)
             columns = [item[0] for item in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+    def latest_observations_as_of(
+        self,
+        *,
+        cutoff: datetime,
+        entity_id: str | None = None,
+        variables: Iterable[str] | None = None,
+    ) -> list[dict]:
+        """Return the most recent observation available for each variable.
+
+        Unlike latest_state_as_of, this view is appropriate for reported
+        annual/monthly indicators whose informational value carries forward until
+        a newer period is published. It still respects known_at and therefore
+        never uses a revision before PREACT could have known it.
+        """
+
+        clauses = [
+            "known_at <= ?",
+            "valid_from <= ?",
+        ]
+        params: list[object] = [cutoff, cutoff]
+
+        if entity_id:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+
+        selected = tuple(str(v) for v in (variables or ()) if str(v))
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            clauses.append(f"variable IN ({placeholders})")
+            params.extend(selected)
+
+        sql = """
+            SELECT * EXCLUDE (rn)
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY entity_id, variable
+                           ORDER BY valid_from DESC, known_at DESC,
+                                    retrieved_at DESC, record_id DESC
+                       ) AS rn
+                FROM temporal_records
+                WHERE {where}
+            )
+            WHERE rn = 1
+            ORDER BY entity_id, variable
+        """.format(where=" AND ".join(clauses))
+
+        with self.connect() as conn:
+            cursor = conn.execute(sql, params)
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
