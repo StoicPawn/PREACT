@@ -15,7 +15,7 @@ from preact.feature_store.event_panel import build_event_risk_panel
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
 from preact.history.warehouse import HistoricalWarehouse
-from preact.models.benchmark_suite import ModelBenchmark, block_bootstrap_brier_skill, evaluate_prediction_frame, run_benchmark_suite
+from preact.models.benchmark_suite import ModelBenchmark, bootstrap_dependence_diagnostic, evaluate_prediction_frame, run_benchmark_suite
 from preact.models.ensemble import sequential_oos_ensemble
 from preact.models.ablation import DEFAULT_FAMILIES, run_family_ablation
 from preact.models.placebo import run_placebo_benchmark
@@ -80,7 +80,8 @@ def main() -> None:
     if features.shape[1] == 0: raise SystemExit("No usable feature columns produced")
     suite = run_benchmark_suite(features, dataset.target, horizon_days=args.horizon_days, min_train_dates=args.min_train_dates, calibration_dates=args.calibration_dates, test_dates_per_fold=args.test_dates_per_fold, bootstrap_samples=args.bootstrap_samples)
     ensemble = sequential_oos_ensemble({name:model.predictions for name,model in suite.models.items()})
-    ensemble_benchmark = ModelBenchmark("sequential_ensemble", ensemble.predictions, evaluate_prediction_frame(ensemble.predictions), block_bootstrap_brier_skill(ensemble.predictions,samples=args.bootstrap_samples))
+    ensemble_diagnostic = bootstrap_dependence_diagnostic(ensemble.predictions, samples=args.bootstrap_samples)
+    ensemble_benchmark = ModelBenchmark("sequential_ensemble", ensemble.predictions, evaluate_prediction_frame(ensemble.predictions), ensemble_diagnostic.block, ensemble_diagnostic)
     benchmarks={**suite.models,"sequential_ensemble":ensemble_benchmark}
     decisions={name:evaluate_research_promotion(b,folds_used=len(suite.folds)) for name,b in benchmarks.items()}
 
