@@ -43,6 +43,19 @@ def evaluate_research_promotion(
     predictions = benchmark.predictions
     calibration = temporal_calibration_diagnostics(predictions)
 
+    # Promotion evidence must be self-consistent with the immutable OOS
+    # prediction artifact. This prevents stale metric summaries from silently
+    # surviving a change in censoring, fold construction, or prediction rows.
+    observed_rows = len(predictions)
+    observed_events = None
+    if "actual" in predictions.columns:
+        observed_events = int(predictions["actual"].sum())
+    metric_accounting_consistent = (
+        int(metrics.rows) == observed_rows
+        and observed_events is not None
+        and int(metrics.events) == observed_events
+    )
+
     # Calibration gates are only meaningful when every temporal slice contains
     # enough genuinely OOS evidence from both outcome classes. In rare-event
     # settings a tiny, event-free, or all-event fold can otherwise look
@@ -69,6 +82,7 @@ def evaluate_research_promotion(
         )
 
     checks = {
+        "metric_accounting_consistent": metric_accounting_consistent,
         "enough_rows": int(metrics.rows) >= policy.min_oos_rows,
         "enough_events": int(metrics.events) >= policy.min_oos_events,
         "enough_folds": int(folds_used) >= policy.min_folds,
