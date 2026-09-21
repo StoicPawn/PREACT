@@ -39,6 +39,12 @@ def temporal_calibration_diagnostics(
     if predictions.empty:
         return CalibrationDriftDiagnostics(0, None, None, None, None)
 
+    # pandas.groupby drops NA keys by default. A missing fold label would thus
+    # keep the row in global ECE/gap while silently excluding it from temporal
+    # drift diagnostics, creating inconsistent evidence for promotion gates.
+    if predictions["fold"].isna().any():
+        raise ValueError("fold must be present for every OOS prediction")
+
     y = predictions["actual"].to_numpy(dtype=float)
     p = predictions["probability"].to_numpy(dtype=float)
     if not np.isfinite(y).all() or not np.isfinite(p).all():
