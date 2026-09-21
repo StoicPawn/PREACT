@@ -13,6 +13,8 @@ class TemporalFold:
     fit_dates: tuple[pd.Timestamp, ...]
     calibration_dates: tuple[pd.Timestamp, ...]
     test_dates: tuple[pd.Timestamp, ...]
+    fit_cutoff: pd.Timestamp
+    calibration_start: pd.Timestamp
     training_cutoff: pd.Timestamp
     test_start: pd.Timestamp
     test_end: pd.Timestamp
@@ -31,10 +33,12 @@ def purged_panel_folds(
     Splits are performed on unique calendar dates, never individual rows, so all
     countries/polities for a date remain in the same fold.  The target horizon
     is purged not only before each test window but also between the fit and
-    calibration windows.  This matters whenever calibration predictions are
-    used for model selection, weighting or probability calibration: otherwise
-    the latest fit labels can contain outcomes occurring inside the calibration
-    period.
+    calibration windows.  The resulting fold records both embargo boundaries,
+    making the full fit -> calibration -> test separation auditable downstream
+    instead of forcing experiment artifacts to reconstruct it from row dates.
+    This matters whenever calibration predictions are used for model selection,
+    weighting or probability calibration: otherwise the latest fit labels can
+    contain outcomes occurring inside the calibration period.
     """
 
     if not isinstance(index, pd.MultiIndex) or "date" not in index.names:
@@ -89,6 +93,8 @@ def purged_panel_folds(
                         fit_dates=tuple(pd.Timestamp(x) for x in fit),
                         calibration_dates=tuple(pd.Timestamp(x) for x in cal),
                         test_dates=tuple(pd.Timestamp(x) for x in test_dates),
+                        fit_cutoff=pd.Timestamp(fit_cutoff),
+                        calibration_start=calibration_start,
                         training_cutoff=pd.Timestamp(training_cutoff),
                         test_start=test_start,
                         test_end=test_end,
