@@ -43,6 +43,11 @@ def temporal_calibration_diagnostics(
     p = predictions["probability"].to_numpy(dtype=float)
     if not np.isfinite(y).all() or not np.isfinite(p).all():
         raise ValueError("actual and probability must be finite")
+    # Calibration metrics assume Bernoulli outcomes. Silently accepting counts,
+    # soft labels, or corrupted target encodings can produce plausible-looking
+    # gaps/ECE and allow an invalid OOS artifact into promotion governance.
+    if not np.isin(y, (0.0, 1.0)).all():
+        raise ValueError("actual must contain binary outcomes in {0, 1}")
     if ((p < 0.0) | (p > 1.0)).any():
         raise ValueError("probability must lie in [0, 1]")
 
