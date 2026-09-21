@@ -17,6 +17,7 @@ class ResearchPromotionPolicy:
     min_worst_fold_skill: float = -0.10
     max_abs_calibration_gap: float = 0.03
     max_worst_fold_calibration_gap: float = 0.05
+    max_fold_calibration_gap_std: float = 0.03
     max_expected_calibration_error: float = 0.05
     min_folds: int = 4
 
@@ -66,6 +67,14 @@ def evaluate_research_promotion(
             and calibration.worst_abs_fold_gap is not None
             and calibration.worst_abs_fold_gap
             <= policy.max_worst_fold_calibration_gap
+        ),
+        # A worst-fold bound alone can still admit repeated, material drift. The
+        # dispersion gate detects instability across the full OOS fold history.
+        "calibration_drift_dispersion": (
+            calibration.folds >= policy.min_folds
+            and calibration.fold_gap_std is not None
+            and calibration.fold_gap_std
+            <= policy.max_fold_calibration_gap_std
         ),
         "calibration_ece": (
             calibration.expected_calibration_error is not None
