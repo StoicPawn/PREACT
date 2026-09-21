@@ -19,6 +19,28 @@ class TemporalFold:
     test_start: pd.Timestamp
     test_end: pd.Timestamp
 
+    def audit_record(self) -> dict[str, object]:
+        """Serialize the complete temporal split contract for experiment artifacts.
+
+        Persisting both embargo boundaries and the actual window endpoints makes
+        leakage checks reproducible without reconstructing folds from a mutable
+        dataset. Counts make truncated or accidentally empty windows visible.
+        """
+        return {
+            "fold": int(self.fold),
+            "fit_start": self.fit_dates[0].isoformat() if self.fit_dates else None,
+            "fit_end": self.fit_dates[-1].isoformat() if self.fit_dates else None,
+            "fit_cutoff": self.fit_cutoff.isoformat(),
+            "fit_dates": len(self.fit_dates),
+            "calibration_start": self.calibration_start.isoformat(),
+            "calibration_end": self.calibration_dates[-1].isoformat() if self.calibration_dates else None,
+            "calibration_dates": len(self.calibration_dates),
+            "training_cutoff": self.training_cutoff.isoformat(),
+            "test_start": self.test_start.isoformat(),
+            "test_end": self.test_end.isoformat(),
+            "test_dates": len(self.test_dates),
+        }
+
 
 def purged_panel_folds(
     index: pd.MultiIndex,
@@ -43,9 +65,6 @@ def purged_panel_folds(
 
     if not isinstance(index, pd.MultiIndex) or "date" not in index.names:
         raise TypeError("index must be a MultiIndex containing 'date'")
-    # PREACT evaluates future-event risk. A zero-day horizon is not a valid
-    # forecasting problem and, more importantly, collapses the temporal embargo
-    # that protects fit/calibration/test labels from sharing outcome time.
     if horizon_days <= 0:
         raise ValueError("horizon_days must be positive")
     if min_train_dates < 5:
