@@ -24,6 +24,24 @@ def test_temporal_calibration_diagnostics_exposes_fold_drift_hidden_by_global_ga
     assert result.expected_calibration_error >= abs(result.weighted_gap)
 
 
+def test_temporal_calibration_diagnostics_exposes_ece_hidden_by_fold_pooling():
+    # The same probability bin is over-confident in one temporal fold and
+    # under-confident in another. Pooling folds makes the bin look perfectly
+    # calibrated, while each deployment period is materially miscalibrated.
+    frame = pd.DataFrame(
+        {
+            "fold": [0] * 10 + [1] * 10,
+            "actual": [1] * 8 + [0] * 2 + [1] * 2 + [0] * 8,
+            "probability": [0.5] * 20,
+        }
+    )
+
+    result = temporal_calibration_diagnostics(frame, bins=10)
+
+    assert result.expected_calibration_error == pytest.approx(0.0)
+    assert result.worst_fold_expected_calibration_error == pytest.approx(0.3)
+
+
 def test_temporal_calibration_diagnostics_rejects_invalid_probabilities():
     frame = pd.DataFrame({"fold": [0], "actual": [1], "probability": [1.1]})
     with pytest.raises(ValueError, match="probability"):
@@ -53,3 +71,4 @@ def test_temporal_calibration_diagnostics_handles_empty_oos_frame():
     result = temporal_calibration_diagnostics(frame)
     assert result.folds == 0
     assert result.expected_calibration_error is None
+    assert result.worst_fold_expected_calibration_error is None
