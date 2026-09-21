@@ -48,7 +48,17 @@ def purged_panel_folds(
     if test_dates_per_fold < 1:
         raise ValueError("test_dates_per_fold must be >= 1")
 
-    dates = pd.Index(index.get_level_values("date").unique()).sort_values()
+    raw_dates = index.get_level_values("date")
+    if raw_dates.isna().any():
+        raise ValueError("date level must not contain missing timestamps")
+    try:
+        normalized_dates = pd.to_datetime(raw_dates, errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("date level must contain valid timestamps") from exc
+    if normalized_dates.isna().any():
+        raise ValueError("date level must not contain missing timestamps")
+
+    dates = pd.Index(normalized_dates.unique()).sort_values()
     purge = pd.Timedelta(days=int(horizon_days))
     folds: list[TemporalFold] = []
     cursor = min_train_dates
