@@ -19,6 +19,7 @@ class ResearchPromotionPolicy:
     max_worst_fold_calibration_gap: float = 0.05
     max_fold_calibration_gap_std: float = 0.03
     max_expected_calibration_error: float = 0.05
+    max_worst_fold_expected_calibration_error: float = 0.08
     min_folds: int = 4
     min_calibration_rows_per_fold: int = 50
     min_calibration_events_per_fold: int = 1
@@ -129,6 +130,16 @@ def evaluate_research_promotion(
             calibration.expected_calibration_error is not None
             and calibration.expected_calibration_error
             <= policy.max_expected_calibration_error
+        ),
+        # Pooled ECE can cancel calibration errors when the same probability bin
+        # behaves differently across time. Require every OOS fold to remain below
+        # a separate ECE ceiling so local reliability failures cannot be hidden by
+        # otherwise well-calibrated periods.
+        "calibration_worst_fold_ece": (
+            calibration.folds >= policy.min_folds
+            and calibration.worst_fold_expected_calibration_error is not None
+            and calibration.worst_fold_expected_calibration_error
+            <= policy.max_worst_fold_expected_calibration_error
         ),
     }
     reasons = tuple(name for name, passed in checks.items() if not passed)
