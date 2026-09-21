@@ -17,6 +17,20 @@ class CalibrationDriftDiagnostics:
     worst_abs_fold_gap: float | None
     fold_gap_std: float | None
     expected_calibration_error: float | None
+    worst_fold_expected_calibration_error: float | None
+
+
+def _fixed_bin_ece(y: np.ndarray, p: np.ndarray, *, bins: int) -> float:
+    """Return ECE on fixed [0, 1] bins so slices remain comparable."""
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    # Include p == 1 in the final bin and keep fixed bins for reproducibility.
+    assignments = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
+    ece = 0.0
+    for bin_id in range(bins):
+        mask = assignments == bin_id
+        if mask.any():
+            ece += float(mask.mean()) * abs(float(p[mask].mean() - y[mask].mean()))
+    return float(ece)
 
 
 def temporal_calibration_diagnostics(
@@ -37,7 +51,7 @@ def temporal_calibration_diagnostics(
     if bins < 2:
         raise ValueError("bins must be at least 2")
     if predictions.empty:
-        return CalibrationDriftDiagnostics(0, None, None, None, None)
+        return CalibrationDriftDiagnostics(0, None, None, None, None, None)
 
     # pandas.groupby drops NA keys by default. A missing fold label would thus
     # keep the row in global ECE/gap while silently excluding it from temporal
@@ -58,18 +72,14 @@ def temporal_calibration_diagnostics(
         raise ValueError("probability must lie in [0, 1]")
 
     gaps: list[float] = []
+    fold_eces: list[float] = []
     for _, group in predictions.groupby("fold", sort=True):
-        gaps.append(float(group["probability"].mean() - group["actual"].mean()))
+        fold_y = group["actual"].to_numpy(dtype=float)
+        fold_p = group["probability"].to_numpy(dtype=float)
+        gaps.append(float(fold_p.mean() - fold_y.mean()))
+        fold_eces.append(_fixed_bin_ece(fold_y, fold_p, bins=bins))
 
-    edges = np.linspace(0.0, 1.0, bins + 1)
-    # Include p == 1 in the final bin and keep fixed bins for reproducibility.
-    assignments = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
-    ece = 0.0
-    for bin_id in range(bins):
-        mask = assignments == bin_id
-        if mask.any():
-            ece += float(mask.mean()) * abs(float(p[mask].mean() - y[mask].mean()))
-
+    ece = _fixed_bin_ece(y, p, bins=bins)
     weighted_gap = float(p.mean() - y.mean())
     worst = float(max(abs(gap) for gap in gaps))
     std = float(np.std(gaps, ddof=0)) if len(gaps) > 1 else 0.0
@@ -78,5 +88,6 @@ def temporal_calibration_diagnostics(
         weighted_gap=weighted_gap,
         worst_abs_fold_gap=worst,
         fold_gap_std=std,
-        expected_calibration_error=float(ece),
+        expected_calibration_error=ece,
+        worst_fold_expected_calibration_error=float(max(fold_eces)),
     )
