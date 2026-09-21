@@ -22,10 +22,11 @@ def test_moving_blocks_keep_contiguous_dates_and_sample_size():
     assert len(replicates) == 8
     for replicate in replicates:
         assert len(replicate) == len(dates)
-        # Every complete sampled block preserves the observed one-day adjacency.
+        # Compare timedeltas rather than raw ``asi8`` integers: pandas may use
+        # microsecond or nanosecond datetime storage depending on its version.
         for start in range(0, 9, 3):
             block = pd.DatetimeIndex(replicate[start : start + 3])
-            assert np.all(np.diff(block.asi8) == pd.Timedelta(days=1).value)
+            assert np.all(np.diff(block.to_numpy()) == np.timedelta64(1, "D"))
 
 
 def test_moving_blocks_sort_irregular_dates_before_resampling():
