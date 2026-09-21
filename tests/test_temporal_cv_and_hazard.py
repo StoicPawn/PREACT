@@ -25,10 +25,27 @@ def test_purged_panel_folds_keep_horizon_between_fit_and_test():
         assert fold.training_cutoff == fold.test_start - horizon
         assert fold.calibration_start == min(fold.calibration_dates)
         assert fold.fit_cutoff == fold.calibration_start - horizon
-        # Both embargo boundaries are persisted on the fold so experiment
-        # artifacts can prove the separation rather than infer it afterwards.
         assert max(fold.fit_dates) < fold.fit_cutoff
         assert max(fold.fit_dates) < min(fold.calibration_dates) - horizon
+
+
+def test_temporal_fold_audit_record_persists_both_embargoes_and_windows():
+    dates = pd.date_range("2000-01-01", periods=60, freq="30D")
+    index = pd.MultiIndex.from_product([dates, ["a", "b"]], names=["date", "entity_id"])
+    fold = purged_panel_folds(
+        index, horizon_days=90, min_train_dates=20, calibration_dates=4, test_dates_per_fold=3
+    )[0]
+    record = fold.audit_record()
+    assert record["fit_cutoff"] == fold.fit_cutoff.isoformat()
+    assert record["training_cutoff"] == fold.training_cutoff.isoformat()
+    assert record["fit_end"] == max(fold.fit_dates).isoformat()
+    assert record["calibration_start"] == min(fold.calibration_dates).isoformat()
+    assert record["calibration_end"] == max(fold.calibration_dates).isoformat()
+    assert record["test_start"] == min(fold.test_dates).isoformat()
+    assert record["test_end"] == max(fold.test_dates).isoformat()
+    assert record["fit_dates"] == len(fold.fit_dates)
+    assert record["calibration_dates"] == len(fold.calibration_dates)
+    assert record["test_dates"] == len(fold.test_dates)
 
 
 def test_purged_panel_folds_calibration_embargo_handles_irregular_dates():
