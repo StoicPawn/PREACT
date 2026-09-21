@@ -183,3 +183,25 @@ def test_research_gate_requires_nonevent_evidence_in_every_calibration_fold():
     assert decision.checks["metric_accounting_consistent"] is True
     assert decision.checks["calibration_fold_evidence"] is False
     assert "calibration_fold_evidence" in decision.reasons
+
+
+def test_research_gate_rejects_local_ece_hidden_by_pooled_calibration():
+    predictions = _well_calibrated_oos()
+    fold_zero = predictions["fold"] == 0
+    fold_zero_index = predictions.index[fold_zero]
+    # Keep fold-level mean error modest while making reliability sharply wrong
+    # inside fixed probability bins: positives receive p=0 and many negatives
+    # receive p=0.12. Other folds remain well calibrated, so pooled ECE stays low.
+    predictions.loc[fold_zero_index, "probability"] = 0.0
+    predictions.loc[fold_zero_index[50:675], "probability"] = 0.12
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
+    assert decision.checks["calibration_fold_stability"] is True
+    assert decision.checks["calibration_ece"] is True
+    assert decision.checks["calibration_worst_fold_ece"] is False
+    assert "calibration_worst_fold_ece" in decision.reasons
