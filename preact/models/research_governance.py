@@ -20,6 +20,8 @@ class ResearchPromotionPolicy:
     max_fold_calibration_gap_std: float = 0.03
     max_expected_calibration_error: float = 0.05
     min_folds: int = 4
+    min_calibration_rows_per_fold: int = 50
+    min_calibration_events_per_fold: int = 1
 
 
 @dataclass(frozen=True)
@@ -37,11 +39,32 @@ def evaluate_research_promotion(
 ) -> ResearchPromotionDecision:
     metrics = benchmark.metrics
     interval = benchmark.brier_skill_interval
-    calibration = temporal_calibration_diagnostics(benchmark.predictions)
+    predictions = benchmark.predictions
+    calibration = temporal_calibration_diagnostics(predictions)
+
+    # Calibration gates are only meaningful when every temporal slice contains
+    # enough genuinely OOS evidence.  In rare-event settings a tiny or
+    # event-free fold can otherwise look deceptively stable/calibrated.
+    fold_evidence_ok = False
+    if {"fold", "actual"}.issubset(predictions.columns):
+        fold_evidence = predictions.groupby("fold", sort=False)["actual"].agg(
+            rows="size", events="sum"
+        )
+        fold_evidence_ok = (
+            len(fold_evidence) >= policy.min_folds
+            and bool(
+                (fold_evidence["rows"] >= policy.min_calibration_rows_per_fold).all()
+            )
+            and bool(
+                (fold_evidence["events"] >= policy.min_calibration_events_per_fold).all()
+            )
+        )
+
     checks = {
         "enough_rows": int(metrics.rows) >= policy.min_oos_rows,
         "enough_events": int(metrics.events) >= policy.min_oos_events,
         "enough_folds": int(folds_used) >= policy.min_folds,
+        "calibration_fold_evidence": fold_evidence_ok,
         "positive_skill": (
             metrics.brier_skill is not None
             and float(metrics.brier_skill) >= policy.min_brier_skill
