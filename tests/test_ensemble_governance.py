@@ -38,17 +38,8 @@ def _well_calibrated_oos():
     return pd.DataFrame(rows)
 
 
-def test_sequential_ensemble_only_uses_prior_fold_performance():
-    result = sequential_oos_ensemble(
-        {"a": _pred(0.0), "b": _pred(0.2)}
-    )
-    assert len(result.predictions) == 12
-    assert result.fold_weights[0] == {"a": 0.5, "b": 0.5}
-    assert result.fold_weights[1]["a"] > result.fold_weights[1]["b"]
-
-
-def test_research_gate_requires_confident_positive_skill():
-    metrics = BenchmarkMetrics(
+def _strong_metrics():
+    return BenchmarkMetrics(
         rows=5000,
         events=200,
         brier=0.08,
@@ -60,6 +51,19 @@ def test_research_gate_requires_confident_positive_skill():
         calibration_gap=0.01,
         worst_fold_brier_skill=0.05,
     )
+
+
+def test_sequential_ensemble_only_uses_prior_fold_performance():
+    result = sequential_oos_ensemble(
+        {"a": _pred(0.0), "b": _pred(0.2)}
+    )
+    assert len(result.predictions) == 12
+    assert result.fold_weights[0] == {"a": 0.5, "b": 0.5}
+    assert result.fold_weights[1]["a"] > result.fold_weights[1]["b"]
+
+
+def test_research_gate_requires_confident_positive_skill():
+    metrics = _strong_metrics()
     good = ModelBenchmark(
         "m",
         _well_calibrated_oos(),
@@ -81,19 +85,9 @@ def test_research_gate_requires_confident_positive_skill():
 
 
 def test_research_gate_rejects_hidden_temporal_calibration_drift():
-    metrics = BenchmarkMetrics(
-        rows=5000,
-        events=200,
-        brier=0.08,
-        hierarchical_baseline_brier=0.10,
-        brier_skill=0.20,
-        log_loss=0.3,
-        roc_auc=0.8,
-        average_precision=0.4,
-        # Aggregate gap looks perfect because opposite fold errors cancel.
-        calibration_gap=0.0,
-        worst_fold_brier_skill=0.05,
-    )
+    metrics = _strong_metrics()
+    # Aggregate gap looks perfect because opposite fold errors cancel.
+    metrics = BenchmarkMetrics(**{**metrics.__dict__, "calibration_gap": 0.0})
     predictions = _well_calibrated_oos()
     predictions.loc[predictions["fold"] == 0, "probability"] = 0.2
     predictions.loc[predictions["fold"] == 1, "probability"] = 0.0
@@ -110,3 +104,23 @@ def test_research_gate_rejects_hidden_temporal_calibration_drift():
     assert decision.checks["calibrated"] is True
     assert decision.checks["calibration_fold_stability"] is False
     assert "calibration_fold_stability" in decision.reasons
+
+
+def test_research_gate_rejects_distributed_calibration_drift():
+    predictions = _well_calibrated_oos()
+    # Keep every fold inside the worst-fold limit while creating persistent
+    # alternating drift. This specifically exercises the dispersion gate.
+    for fold, shift in enumerate((0.04, -0.04, 0.04, -0.04)):
+        predictions.loc[predictions["fold"] == fold, "probability"] += shift
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
+
+    assert decision.checks["calibration_fold_stability"] is True
+    assert decision.checks["calibration_drift_dispersion"] is False
+    assert "calibration_drift_dispersion" in decision.reasons
