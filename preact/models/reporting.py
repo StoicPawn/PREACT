@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Iterable
 
 from .benchmark_suite import ModelBenchmark
 from .calibration_diagnostics import temporal_calibration_diagnostics
+from .temporal_cv import TemporalFold
+
+
+def temporal_fold_audits(folds: Iterable[TemporalFold]) -> list[dict[str, object]]:
+    """Serialize temporal folds without duplicating the split contract.
+
+    Keeping report serialization delegated to ``TemporalFold.audit_record``
+    prevents experiment artifacts from drifting away from the canonical
+    anti-leakage definition as new embargo boundaries are added.
+    """
+    return [fold.audit_record() for fold in folds]
 
 
 def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
