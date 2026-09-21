@@ -6,7 +6,8 @@ from preact.models.benchmark_suite import (
     ModelBenchmark,
     SkillInterval,
 )
-from preact.models.reporting import benchmark_diagnostics
+from preact.models.reporting import benchmark_diagnostics, temporal_fold_audits
+from preact.models.temporal_cv import TemporalFold
 
 
 def test_benchmark_diagnostics_preserves_dependence_aware_and_iid_intervals():
@@ -54,3 +55,29 @@ def test_benchmark_diagnostics_serializes_temporal_calibration_drift_from_oos_pr
     assert drift["worst_abs_fold_gap"] == 0.2
     assert drift["fold_gap_std"] == 0.1
     assert drift["expected_calibration_error"] >= abs(drift["weighted_gap"])
+
+
+def test_temporal_fold_audits_preserve_full_embargo_contract():
+    fit = tuple(pd.to_datetime(["2020-01-01", "2020-02-01"]))
+    calibration = tuple(pd.to_datetime(["2020-04-01", "2020-05-01"]))
+    test = tuple(pd.to_datetime(["2020-07-01", "2020-08-01"]))
+    fold = TemporalFold(
+        fold=3,
+        fit_dates=fit,
+        calibration_dates=calibration,
+        test_dates=test,
+        fit_cutoff=pd.Timestamp("2020-03-01"),
+        calibration_start=pd.Timestamp("2020-04-01"),
+        training_cutoff=pd.Timestamp("2020-06-01"),
+        test_start=pd.Timestamp("2020-07-01"),
+        test_end=pd.Timestamp("2020-08-01"),
+    )
+
+    payload = temporal_fold_audits([fold])
+
+    assert payload == [fold.audit_record()]
+    assert payload[0]["fit_cutoff"] == "2020-03-01T00:00:00"
+    assert payload[0]["training_cutoff"] == "2020-06-01T00:00:00"
+    assert payload[0]["fit_dates"] == 2
+    assert payload[0]["calibration_dates"] == 2
+    assert payload[0]["test_dates"] == 2
