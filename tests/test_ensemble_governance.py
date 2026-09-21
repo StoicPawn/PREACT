@@ -70,7 +70,7 @@ def test_research_gate_requires_confident_positive_skill():
         metrics,
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
-    decision = evaluate_research_promotion(good, folds_used=6)
+    decision = evaluate_research_promotion(good, folds_used=4)
     assert decision.promotable is True
 
     weak = ModelBenchmark(
@@ -79,9 +79,23 @@ def test_research_gate_requires_confident_positive_skill():
         metrics,
         SkillInterval(-0.02, 0.2, 0.3, 1000),
     )
-    decision = evaluate_research_promotion(weak, folds_used=6)
+    decision = evaluate_research_promotion(weak, folds_used=4)
     assert decision.promotable is False
     assert "skill_ci_positive" in decision.reasons
+
+
+def test_research_gate_rejects_fold_count_metadata_drift():
+    benchmark = ModelBenchmark(
+        "m",
+        _well_calibrated_oos(),
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+    decision = evaluate_research_promotion(benchmark, folds_used=6)
+    assert decision.promotable is False
+    assert decision.checks["enough_folds"] is True
+    assert decision.checks["fold_accounting_consistent"] is False
+    assert "fold_accounting_consistent" in decision.reasons
 
 
 def test_research_gate_rejects_hidden_temporal_calibration_drift():
