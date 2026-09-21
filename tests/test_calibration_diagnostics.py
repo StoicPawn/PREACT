@@ -38,6 +38,16 @@ def test_temporal_calibration_diagnostics_rejects_nonbinary_targets():
         temporal_calibration_diagnostics(frame)
 
 
+def test_temporal_calibration_diagnostics_rejects_missing_fold_labels():
+    # groupby would otherwise silently drop the unlabeled row from fold drift
+    # while global ECE/gap still include it, making governance evidence disagree.
+    frame = pd.DataFrame(
+        {"fold": [0, None, 1], "actual": [0, 1, 1], "probability": [0.1, 0.8, 0.7]}
+    )
+    with pytest.raises(ValueError, match="fold must be present"):
+        temporal_calibration_diagnostics(frame)
+
+
 def test_temporal_calibration_diagnostics_handles_empty_oos_frame():
     frame = pd.DataFrame(columns=["fold", "actual", "probability"])
     result = temporal_calibration_diagnostics(frame)
