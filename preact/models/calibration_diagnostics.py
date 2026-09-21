@@ -1,0 +1,71 @@
+"""Leakage-safe diagnostics for calibration drift in OOS prediction frames."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class CalibrationDriftDiagnostics:
+    """Summarise calibration stability across already-OOS temporal folds."""
+
+    folds: int
+    weighted_gap: float | None
+    worst_abs_fold_gap: float | None
+    fold_gap_std: float | None
+    expected_calibration_error: float | None
+
+
+def temporal_calibration_diagnostics(
+    predictions: pd.DataFrame,
+    *,
+    bins: int = 10,
+) -> CalibrationDriftDiagnostics:
+    """Measure calibration drift without refitting on evaluation observations.
+
+    ``predictions`` must contain OOS ``actual``, ``probability`` and ``fold``
+    columns. ECE bins are fixed on [0, 1], rather than estimated from the
+    evaluation sample, so diagnostics remain comparable across experiments.
+    """
+    required = {"actual", "probability", "fold"}
+    missing = required.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"missing calibration columns: {sorted(missing)}")
+    if bins < 2:
+        raise ValueError("bins must be at least 2")
+    if predictions.empty:
+        return CalibrationDriftDiagnostics(0, None, None, None, None)
+
+    y = predictions["actual"].to_numpy(dtype=float)
+    p = predictions["probability"].to_numpy(dtype=float)
+    if not np.isfinite(y).all() or not np.isfinite(p).all():
+        raise ValueError("actual and probability must be finite")
+    if ((p < 0.0) | (p > 1.0)).any():
+        raise ValueError("probability must lie in [0, 1]")
+
+    gaps: list[float] = []
+    for _, group in predictions.groupby("fold", sort=True):
+        gaps.append(float(group["probability"].mean() - group["actual"].mean()))
+
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    # Include p == 1 in the final bin and keep fixed bins for reproducibility.
+    assignments = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
+    ece = 0.0
+    for bin_id in range(bins):
+        mask = assignments == bin_id
+        if mask.any():
+            ece += float(mask.mean()) * abs(float(p[mask].mean() - y[mask].mean()))
+
+    weighted_gap = float(p.mean() - y.mean())
+    worst = float(max(abs(gap) for gap in gaps))
+    std = float(np.std(gaps, ddof=0)) if len(gaps) > 1 else 0.0
+    return CalibrationDriftDiagnostics(
+        folds=len(gaps),
+        weighted_gap=weighted_gap,
+        worst_abs_fold_gap=worst,
+        fold_gap_std=std,
+        expected_calibration_error=float(ece),
+    )
