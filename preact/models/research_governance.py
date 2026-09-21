@@ -22,6 +22,7 @@ class ResearchPromotionPolicy:
     min_folds: int = 4
     min_calibration_rows_per_fold: int = 50
     min_calibration_events_per_fold: int = 1
+    min_calibration_nonevents_per_fold: int = 1
 
 
 @dataclass(frozen=True)
@@ -43,13 +44,15 @@ def evaluate_research_promotion(
     calibration = temporal_calibration_diagnostics(predictions)
 
     # Calibration gates are only meaningful when every temporal slice contains
-    # enough genuinely OOS evidence.  In rare-event settings a tiny or
-    # event-free fold can otherwise look deceptively stable/calibrated.
+    # enough genuinely OOS evidence from both outcome classes. In rare-event
+    # settings a tiny, event-free, or all-event fold can otherwise look
+    # deceptively stable/calibrated.
     fold_evidence_ok = False
     if {"fold", "actual"}.issubset(predictions.columns):
         fold_evidence = predictions.groupby("fold", sort=False)["actual"].agg(
             rows="size", events="sum"
         )
+        nonevents = fold_evidence["rows"] - fold_evidence["events"]
         fold_evidence_ok = (
             len(fold_evidence) >= policy.min_folds
             and bool(
@@ -57,6 +60,9 @@ def evaluate_research_promotion(
             )
             and bool(
                 (fold_evidence["events"] >= policy.min_calibration_events_per_fold).all()
+            )
+            and bool(
+                (nonevents >= policy.min_calibration_nonevents_per_fold).all()
             )
         )
 
