@@ -124,3 +124,23 @@ def test_research_gate_rejects_distributed_calibration_drift():
     assert decision.checks["calibration_fold_stability"] is True
     assert decision.checks["calibration_drift_dispersion"] is False
     assert "calibration_drift_dispersion" in decision.reasons
+
+
+def test_research_gate_requires_event_evidence_in_every_calibration_fold():
+    predictions = _well_calibrated_oos()
+    # Aggregate metrics can remain strong even if a temporal slice has no
+    # positives. Such a fold cannot validate rare-event calibration.
+    predictions.loc[predictions["fold"] == 3, "actual"] = 0
+    predictions.loc[predictions["fold"] == 3, "probability"] = 0.0
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
+
+    assert decision.promotable is False
+    assert decision.checks["calibration_fold_evidence"] is False
+    assert "calibration_fold_evidence" in decision.reasons
