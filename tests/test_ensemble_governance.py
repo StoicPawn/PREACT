@@ -86,7 +86,6 @@ def test_research_gate_requires_confident_positive_skill():
 
 def test_research_gate_rejects_hidden_temporal_calibration_drift():
     metrics = _strong_metrics()
-    # Aggregate gap looks perfect because opposite fold errors cancel.
     metrics = BenchmarkMetrics(**{**metrics.__dict__, "calibration_gap": 0.0})
     predictions = _well_calibrated_oos()
     predictions.loc[predictions["fold"] == 0, "probability"] = 0.2
@@ -97,9 +96,7 @@ def test_research_gate_rejects_hidden_temporal_calibration_drift():
         metrics,
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
-
     decision = evaluate_research_promotion(benchmark, folds_used=4)
-
     assert decision.promotable is False
     assert decision.checks["calibrated"] is True
     assert decision.checks["calibration_fold_stability"] is False
@@ -108,8 +105,6 @@ def test_research_gate_rejects_hidden_temporal_calibration_drift():
 
 def test_research_gate_rejects_distributed_calibration_drift():
     predictions = _well_calibrated_oos()
-    # Keep every fold inside the worst-fold limit while creating persistent
-    # alternating drift. This specifically exercises the dispersion gate.
     for fold, shift in enumerate((0.04, -0.04, 0.04, -0.04)):
         predictions.loc[predictions["fold"] == fold, "probability"] += shift
     benchmark = ModelBenchmark(
@@ -118,9 +113,7 @@ def test_research_gate_rejects_distributed_calibration_drift():
         _strong_metrics(),
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
-
     decision = evaluate_research_promotion(benchmark, folds_used=4)
-
     assert decision.checks["calibration_fold_stability"] is True
     assert decision.checks["calibration_drift_dispersion"] is False
     assert "calibration_drift_dispersion" in decision.reasons
@@ -128,8 +121,6 @@ def test_research_gate_rejects_distributed_calibration_drift():
 
 def test_research_gate_requires_event_evidence_in_every_calibration_fold():
     predictions = _well_calibrated_oos()
-    # Aggregate metrics can remain strong even if a temporal slice has no
-    # positives. Such a fold cannot validate rare-event calibration.
     predictions.loc[predictions["fold"] == 3, "actual"] = 0
     predictions.loc[predictions["fold"] == 3, "probability"] = 0.0
     benchmark = ModelBenchmark(
@@ -138,9 +129,25 @@ def test_research_gate_requires_event_evidence_in_every_calibration_fold():
         _strong_metrics(),
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
-
     decision = evaluate_research_promotion(benchmark, folds_used=4)
+    assert decision.promotable is False
+    assert decision.checks["calibration_fold_evidence"] is False
+    assert "calibration_fold_evidence" in decision.reasons
 
+
+def test_research_gate_requires_nonevent_evidence_in_every_calibration_fold():
+    predictions = _well_calibrated_oos()
+    # Calibration is not identifiable from a fold containing only positives,
+    # just as it is not identifiable from an event-free fold.
+    predictions.loc[predictions["fold"] == 3, "actual"] = 1
+    predictions.loc[predictions["fold"] == 3, "probability"] = 1.0
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
     assert decision.promotable is False
     assert decision.checks["calibration_fold_evidence"] is False
     assert "calibration_fold_evidence" in decision.reasons
