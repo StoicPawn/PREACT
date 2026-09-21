@@ -22,9 +22,12 @@ def test_purged_panel_folds_keep_horizon_between_fit_and_test():
     horizon = pd.Timedelta(days=90)
     for fold in folds:
         assert max(fold.calibration_dates) < fold.training_cutoff
-        assert fold.training_cutoff <= fold.test_start - horizon
-        # Fit targets must be fully observable before calibration starts; this
-        # prevents model-selection/calibration leakage, not only test leakage.
+        assert fold.training_cutoff == fold.test_start - horizon
+        assert fold.calibration_start == min(fold.calibration_dates)
+        assert fold.fit_cutoff == fold.calibration_start - horizon
+        # Both embargo boundaries are persisted on the fold so experiment
+        # artifacts can prove the separation rather than infer it afterwards.
+        assert max(fold.fit_dates) < fold.fit_cutoff
         assert max(fold.fit_dates) < min(fold.calibration_dates) - horizon
 
 
@@ -44,6 +47,8 @@ def test_purged_panel_folds_calibration_embargo_handles_irregular_dates():
     assert folds
     horizon = pd.Timedelta(days=75)
     for fold in folds:
+        assert fold.fit_cutoff == fold.calibration_start - horizon
+        assert fold.training_cutoff == fold.test_start - horizon
         assert max(fold.fit_dates) + horizon < min(fold.calibration_dates)
         assert max(fold.calibration_dates) + horizon < fold.test_start
 
