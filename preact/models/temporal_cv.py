@@ -39,8 +39,11 @@ def purged_panel_folds(
 
     if not isinstance(index, pd.MultiIndex) or "date" not in index.names:
         raise TypeError("index must be a MultiIndex containing 'date'")
-    if horizon_days < 0:
-        raise ValueError("horizon_days must be non-negative")
+    # PREACT evaluates future-event risk. A zero-day horizon is not a valid
+    # forecasting problem and, more importantly, collapses the temporal embargo
+    # that protects fit/calibration/test labels from sharing outcome time.
+    if horizon_days <= 0:
+        raise ValueError("horizon_days must be positive")
     if min_train_dates < 5:
         raise ValueError("min_train_dates must be >= 5")
     if calibration_dates < 1:
