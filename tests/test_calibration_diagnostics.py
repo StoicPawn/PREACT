@@ -30,6 +30,14 @@ def test_temporal_calibration_diagnostics_rejects_invalid_probabilities():
         temporal_calibration_diagnostics(frame)
 
 
+def test_temporal_calibration_diagnostics_rejects_nonbinary_targets():
+    frame = pd.DataFrame(
+        {"fold": [0, 0, 0], "actual": [0, 1, 2], "probability": [0.1, 0.8, 0.9]}
+    )
+    with pytest.raises(ValueError, match="binary outcomes"):
+        temporal_calibration_diagnostics(frame)
+
+
 def test_temporal_calibration_diagnostics_handles_empty_oos_frame():
     frame = pd.DataFrame(columns=["fold", "actual", "probability"])
     result = temporal_calibration_diagnostics(frame)
