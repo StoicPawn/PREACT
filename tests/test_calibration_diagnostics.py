@@ -5,8 +5,6 @@ from preact.models.calibration_diagnostics import temporal_calibration_diagnosti
 
 
 def test_temporal_calibration_diagnostics_exposes_fold_drift_hidden_by_global_gap():
-    # Opposite fold biases cancel globally; a global calibration-gap metric alone
-    # would therefore hide a material time-local calibration failure.
     frame = pd.DataFrame(
         {
             "fold": [0, 0, 0, 0, 1, 1, 1, 1],
@@ -14,9 +12,7 @@ def test_temporal_calibration_diagnostics_exposes_fold_drift_hidden_by_global_ga
             "probability": [0.2, 0.2, 0.8, 0.8, 0.0, 0.0, 0.6, 0.6],
         }
     )
-
     result = temporal_calibration_diagnostics(frame, bins=5)
-
     assert result.folds == 2
     assert result.weighted_gap == pytest.approx(-0.1)
     assert result.worst_abs_fold_gap == pytest.approx(0.2)
@@ -25,9 +21,6 @@ def test_temporal_calibration_diagnostics_exposes_fold_drift_hidden_by_global_ga
 
 
 def test_temporal_calibration_diagnostics_exposes_ece_hidden_by_fold_pooling():
-    # The same probability bin is over-confident in one temporal fold and
-    # under-confident in another. Pooling folds makes the bin look perfectly
-    # calibrated, while each deployment period is materially miscalibrated.
     frame = pd.DataFrame(
         {
             "fold": [0] * 10 + [1] * 10,
@@ -35,9 +28,7 @@ def test_temporal_calibration_diagnostics_exposes_ece_hidden_by_fold_pooling():
             "probability": [0.5] * 20,
         }
     )
-
     result = temporal_calibration_diagnostics(frame, bins=10)
-
     assert result.expected_calibration_error == pytest.approx(0.0)
     assert result.worst_fold_expected_calibration_error == pytest.approx(0.3)
 
@@ -57,12 +48,19 @@ def test_temporal_calibration_diagnostics_rejects_nonbinary_targets():
 
 
 def test_temporal_calibration_diagnostics_rejects_missing_fold_labels():
-    # groupby would otherwise silently drop the unlabeled row from fold drift
-    # while global ECE/gap still include it, making governance evidence disagree.
     frame = pd.DataFrame(
         {"fold": [0, None, 1], "actual": [0, 1, 1], "probability": [0.1, 0.8, 0.7]}
     )
     with pytest.raises(ValueError, match="fold must be present"):
+        temporal_calibration_diagnostics(frame)
+
+
+@pytest.mark.parametrize("bad_fold", [-1, 1.5, "not-a-fold"])
+def test_temporal_calibration_diagnostics_rejects_malformed_fold_identifiers(bad_fold):
+    frame = pd.DataFrame(
+        {"fold": [0, bad_fold], "actual": [0, 1], "probability": [0.1, 0.8]}
+    )
+    with pytest.raises(ValueError, match="non-negative integer identifiers"):
         temporal_calibration_diagnostics(frame)
 
 
