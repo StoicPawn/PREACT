@@ -6,14 +6,17 @@ from dataclasses import asdict
 from typing import Any
 
 from .benchmark_suite import ModelBenchmark
+from .calibration_diagnostics import temporal_calibration_diagnostics
 
 
 def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
-    """Serialize benchmark uncertainty without dropping dependence diagnostics.
+    """Serialize benchmark uncertainty and OOS calibration diagnostics.
 
     The dependence-aware block interval remains the primary uncertainty measure;
     the IID interval and width ratio are emitted only as diagnostics so reports
-    can expose when serial dependence materially changes uncertainty.
+    can expose when serial dependence materially changes uncertainty. Calibration
+    drift is computed only from the benchmark's already-OOS predictions: it is a
+    diagnostic and never refits or tunes a model on evaluation observations.
     """
     payload: dict[str, Any] = {
         "name": benchmark.name,
@@ -33,4 +36,9 @@ def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
             ),
         }
     )
+    predictions = benchmark.predictions
+    if predictions is None:
+        payload["calibration_drift"] = None
+    else:
+        payload["calibration_drift"] = asdict(temporal_calibration_diagnostics(predictions))
     return payload
