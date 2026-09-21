@@ -33,8 +33,9 @@ def _pred(model_shift: float):
 def _well_calibrated_oos():
     rows = []
     for fold in range(4):
+        fold_date = pd.Timestamp("2020-01-01") + pd.Timedelta(days=fold)
         for i in range(1250):
-            rows.append({"fold": fold, "actual": int(i < 50), "probability": 0.04})
+            rows.append({"date": fold_date, "fold": fold, "actual": int(i < 50), "probability": 0.04})
     return pd.DataFrame(rows)
 
 
@@ -112,6 +113,21 @@ def test_research_gate_rejects_fold_count_metadata_drift():
     assert "fold_accounting_consistent" in decision.reasons
 
 
+def test_research_gate_rejects_overlapping_temporal_oos_folds():
+    predictions = _well_calibrated_oos()
+    predictions.loc[predictions["fold"] == 1, "date"] = pd.Timestamp("2020-01-01")
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
+    assert decision.promotable is False
+    assert decision.checks["temporal_folds_nonoverlapping"] is False
+    assert "temporal_folds_nonoverlapping" in decision.reasons
+
+
 def test_research_gate_rejects_hidden_temporal_calibration_drift():
     metrics = _strong_metrics()
     metrics = BenchmarkMetrics(**{**metrics.__dict__, "calibration_gap": 0.0})
@@ -167,8 +183,6 @@ def test_research_gate_requires_event_evidence_in_every_calibration_fold():
 
 def test_research_gate_requires_nonevent_evidence_in_every_calibration_fold():
     predictions = _well_calibrated_oos()
-    # Calibration is not identifiable from a fold containing only positives,
-    # just as it is not identifiable from an event-free fold.
     predictions.loc[predictions["fold"] == 3, "actual"] = 1
     predictions.loc[predictions["fold"] == 3, "probability"] = 1.0
     metrics = BenchmarkMetrics(**{**_strong_metrics().__dict__, "events": 1400})
@@ -189,9 +203,6 @@ def test_research_gate_rejects_local_ece_hidden_by_pooled_calibration():
     predictions = _well_calibrated_oos()
     fold_zero = predictions["fold"] == 0
     fold_zero_index = predictions.index[fold_zero]
-    # Keep fold-level mean error modest while making reliability sharply wrong
-    # inside fixed probability bins: positives receive p=0 and many negatives
-    # receive p=0.12. Other folds remain well calibrated, so pooled ECE stays low.
     predictions.loc[fold_zero_index, "probability"] = 0.0
     predictions.loc[fold_zero_index[50:675], "probability"] = 0.12
     benchmark = ModelBenchmark(
