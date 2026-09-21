@@ -33,8 +33,8 @@ def _pred(model_shift: float):
 def _well_calibrated_oos():
     rows = []
     for fold in range(4):
-        for i in range(100):
-            rows.append({"fold": fold, "actual": int(i < 10), "probability": 0.1})
+        for i in range(1250):
+            rows.append({"fold": fold, "actual": int(i < 50), "probability": 0.04})
     return pd.DataFrame(rows)
 
 
@@ -84,6 +84,20 @@ def test_research_gate_requires_confident_positive_skill():
     assert "skill_ci_positive" in decision.reasons
 
 
+def test_research_gate_rejects_stale_metric_accounting():
+    predictions = _well_calibrated_oos().iloc[:-1].copy()
+    benchmark = ModelBenchmark(
+        "m",
+        predictions,
+        _strong_metrics(),
+        SkillInterval(0.05, 0.2, 0.3, 1000),
+    )
+    decision = evaluate_research_promotion(benchmark, folds_used=4)
+    assert decision.promotable is False
+    assert decision.checks["metric_accounting_consistent"] is False
+    assert "metric_accounting_consistent" in decision.reasons
+
+
 def test_research_gate_rejects_fold_count_metadata_drift():
     benchmark = ModelBenchmark(
         "m",
@@ -102,7 +116,7 @@ def test_research_gate_rejects_hidden_temporal_calibration_drift():
     metrics = _strong_metrics()
     metrics = BenchmarkMetrics(**{**metrics.__dict__, "calibration_gap": 0.0})
     predictions = _well_calibrated_oos()
-    predictions.loc[predictions["fold"] == 0, "probability"] = 0.2
+    predictions.loc[predictions["fold"] == 0, "probability"] = 0.14
     predictions.loc[predictions["fold"] == 1, "probability"] = 0.0
     benchmark = ModelBenchmark(
         "m",
@@ -137,14 +151,16 @@ def test_research_gate_requires_event_evidence_in_every_calibration_fold():
     predictions = _well_calibrated_oos()
     predictions.loc[predictions["fold"] == 3, "actual"] = 0
     predictions.loc[predictions["fold"] == 3, "probability"] = 0.0
+    metrics = BenchmarkMetrics(**{**_strong_metrics().__dict__, "events": 150})
     benchmark = ModelBenchmark(
         "m",
         predictions,
-        _strong_metrics(),
+        metrics,
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
     decision = evaluate_research_promotion(benchmark, folds_used=4)
     assert decision.promotable is False
+    assert decision.checks["metric_accounting_consistent"] is True
     assert decision.checks["calibration_fold_evidence"] is False
     assert "calibration_fold_evidence" in decision.reasons
 
@@ -155,13 +171,15 @@ def test_research_gate_requires_nonevent_evidence_in_every_calibration_fold():
     # just as it is not identifiable from an event-free fold.
     predictions.loc[predictions["fold"] == 3, "actual"] = 1
     predictions.loc[predictions["fold"] == 3, "probability"] = 1.0
+    metrics = BenchmarkMetrics(**{**_strong_metrics().__dict__, "events": 1400})
     benchmark = ModelBenchmark(
         "m",
         predictions,
-        _strong_metrics(),
+        metrics,
         SkillInterval(0.05, 0.2, 0.3, 1000),
     )
     decision = evaluate_research_promotion(benchmark, folds_used=4)
     assert decision.promotable is False
+    assert decision.checks["metric_accounting_consistent"] is True
     assert decision.checks["calibration_fold_evidence"] is False
     assert "calibration_fold_evidence" in decision.reasons
