@@ -23,7 +23,6 @@ class CalibrationDriftDiagnostics:
 def _fixed_bin_ece(y: np.ndarray, p: np.ndarray, *, bins: int) -> float:
     """Return ECE on fixed [0, 1] bins so slices remain comparable."""
     edges = np.linspace(0.0, 1.0, bins + 1)
-    # Include p == 1 in the final bin and keep fixed bins for reproducibility.
     assignments = np.clip(np.searchsorted(edges, p, side="right") - 1, 0, bins - 1)
     ece = 0.0
     for bin_id in range(bins):
@@ -38,12 +37,7 @@ def temporal_calibration_diagnostics(
     *,
     bins: int = 10,
 ) -> CalibrationDriftDiagnostics:
-    """Measure calibration drift without refitting on evaluation observations.
-
-    ``predictions`` must contain OOS ``actual``, ``probability`` and ``fold``
-    columns. ECE bins are fixed on [0, 1], rather than estimated from the
-    evaluation sample, so diagnostics remain comparable across experiments.
-    """
+    """Measure calibration drift without refitting on evaluation observations."""
     required = {"actual", "probability", "fold"}
     missing = required.difference(predictions.columns)
     if missing:
@@ -53,19 +47,23 @@ def temporal_calibration_diagnostics(
     if predictions.empty:
         return CalibrationDriftDiagnostics(0, None, None, None, None, None)
 
-    # pandas.groupby drops NA keys by default. A missing fold label would thus
-    # keep the row in global ECE/gap while silently excluding it from temporal
-    # drift diagnostics, creating inconsistent evidence for promotion gates.
     if predictions["fold"].isna().any():
         raise ValueError("fold must be present for every OOS prediction")
+    # Fold identifiers are part of the temporal-validation evidence, not labels
+    # supplied by a model. Require canonical non-negative integer IDs so mixed
+    # strings/numbers cannot make grouping order-dependent or crash sorting.
+    fold_numeric = pd.to_numeric(predictions["fold"], errors="coerce").to_numpy(dtype=float)
+    if (
+        not np.isfinite(fold_numeric).all()
+        or (fold_numeric < 0).any()
+        or not np.equal(fold_numeric, np.floor(fold_numeric)).all()
+    ):
+        raise ValueError("fold must contain non-negative integer identifiers")
 
     y = predictions["actual"].to_numpy(dtype=float)
     p = predictions["probability"].to_numpy(dtype=float)
     if not np.isfinite(y).all() or not np.isfinite(p).all():
         raise ValueError("actual and probability must be finite")
-    # Calibration metrics assume Bernoulli outcomes. Silently accepting counts,
-    # soft labels, or corrupted target encodings can produce plausible-looking
-    # gaps/ECE and allow an invalid OOS artifact into promotion governance.
     if not np.isin(y, (0.0, 1.0)).all():
         raise ValueError("actual must contain binary outcomes in {0, 1}")
     if ((p < 0.0) | (p > 1.0)).any():
@@ -73,7 +71,10 @@ def temporal_calibration_diagnostics(
 
     gaps: list[float] = []
     fold_eces: list[float] = []
-    for _, group in predictions.groupby("fold", sort=True):
+    # Group by the validated canonical representation, avoiding pandas sorting
+    # behaviour that differs for heterogeneous object-typed fold columns.
+    frame = predictions.assign(_validated_fold=fold_numeric.astype(np.int64))
+    for _, group in frame.groupby("_validated_fold", sort=True):
         fold_y = group["actual"].to_numpy(dtype=float)
         fold_p = group["probability"].to_numpy(dtype=float)
         gaps.append(float(fold_p.mean() - fold_y.mean()))
