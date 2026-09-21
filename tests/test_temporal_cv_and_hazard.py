@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from preact.models.hazard import ComplementaryLogLogHazard
 from preact.models.temporal_cv import purged_panel_folds
@@ -47,6 +48,18 @@ def test_purged_panel_folds_calibration_embargo_handles_irregular_dates():
     for fold in folds:
         assert max(fold.fit_dates) + horizon < min(fold.calibration_dates)
         assert max(fold.calibration_dates) + horizon < fold.test_start
+
+
+def test_purged_panel_folds_reject_missing_dates():
+    index = pd.MultiIndex.from_arrays(
+        [
+            [pd.Timestamp("2000-01-01"), pd.NaT, pd.Timestamp("2000-03-01")],
+            ["a", "a", "a"],
+        ],
+        names=["date", "entity_id"],
+    )
+    with pytest.raises(ValueError, match="missing timestamps"):
+        purged_panel_folds(index, horizon_days=30)
 
 
 def test_cloglog_hazard_learns_monotone_signal():
