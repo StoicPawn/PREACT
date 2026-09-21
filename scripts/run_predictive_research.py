@@ -22,7 +22,7 @@ from preact.models.placebo import run_placebo_benchmark
 from preact.models.sliced_evaluation import temporal_slice_metrics
 from preact.models.stress_tests import run_unseen_entity_stress
 from preact.models.experiment_manifest import build_manifest
-from preact.models.reporting import benchmark_diagnostics
+from preact.models.reporting import benchmark_diagnostics, temporal_fold_audits
 from preact.models.research_governance import evaluate_research_promotion
 
 
@@ -105,7 +105,7 @@ def main() -> None:
     stability={name:[asdict(item) for item in temporal_slice_metrics(b.predictions)] for name,b in benchmarks.items()}
     manifest=build_manifest(features,dataset.target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None})
     output=Path(args.output_dir)/manifest.dataset_fingerprint[:16]; output.mkdir(parents=True,exist_ok=True)
-    report={"manifest":manifest.to_dict(),"models":{name:{**benchmark_diagnostics(b),"promotion":asdict(decisions[name])} for name,b in benchmarks.items()},"folds":[{"fold":f.fold,"training_cutoff":f.training_cutoff.isoformat(),"test_start":f.test_start.isoformat(),"test_end":f.test_end.isoformat()} for f in suite.folds],"ensemble_fold_weights":{str(k):dict(v) for k,v in ensemble.fold_weights.items()},"temporal_stability":stability,"geographic_stress":geographic_stress,"placebo":placebo,"ablations":ablations}
+    report={"manifest":manifest.to_dict(),"models":{name:{**benchmark_diagnostics(b),"promotion":asdict(decisions[name])} for name,b in benchmarks.items()},"folds":temporal_fold_audits(suite.folds),"ensemble_fold_weights":{str(k):dict(v) for k,v in ensemble.fold_weights.items()},"temporal_stability":stability,"geographic_stress":geographic_stress,"placebo":placebo,"ablations":ablations}
     (output/"report.json").write_text(json.dumps(report,indent=2,sort_keys=True,default=str),encoding="utf-8")
     for name,b in benchmarks.items():
         if not b.predictions.empty: b.predictions.to_parquet(output/f"predictions_{name}.parquet",index=False)
