@@ -74,10 +74,11 @@ def test_benchmark_suite_runs_models_on_identical_oos_rows():
     p = 1 / (1 + np.exp(-logits))
     y = pd.Series(rng.binomial(1, p), index=index)
 
+    horizon_days = 60
     result = run_benchmark_suite(
         x,
         y,
-        horizon_days=60,
+        horizon_days=horizon_days,
         min_train_dates=25,
         calibration_dates=4,
         test_dates_per_fold=4,
@@ -94,3 +95,24 @@ def test_benchmark_suite_runs_models_on_identical_oos_rows():
     assert len(lengths) == 1
     assert next(iter(lengths)) > 0
     assert all(model.metrics.rows > 0 for model in result.models.values())
+
+    # Every candidate must be scored on exactly the same OOS observations.  A
+    # length-only check can miss model-specific row substitutions or duplicate
+    # forecasts and would make benchmark comparisons invalid.
+    reference_keys = None
+    for model in result.models.values():
+        frame = model.predictions
+        assert not frame.duplicated(["date", "entity_id"]).any()
+        keys = set(zip(frame["date"], frame["entity_id"], strict=True))
+        if reference_keys is None:
+            reference_keys = keys
+        else:
+            assert keys == reference_keys
+
+        # The latest label admitted to training/calibration must be separated
+        # from every scored forecast by at least the target horizon.  Keep this
+        # invariant at the benchmark boundary so future CV refactors cannot
+        # silently reintroduce temporal target leakage.
+        forecast_dates = pd.to_datetime(frame["date"])
+        cutoffs = pd.to_datetime(frame["training_cutoff"])
+        assert (cutoffs <= forecast_dates - pd.Timedelta(days=horizon_days)).all()
