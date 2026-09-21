@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+import pandas as pd
+
 from preact.models.calibration_diagnostics import temporal_calibration_diagnostics
 
 
@@ -82,6 +84,24 @@ def evaluate_research_promotion(
             )
         )
 
+    # Fold IDs alone do not prove temporal separation. Promotion requires each
+    # successive OOS fold to start strictly after the previous fold ends. This
+    # catches accidentally overlapping/reused evaluation windows that inflate
+    # apparent sample size and can invalidate sequential OOS governance.
+    temporal_folds_nonoverlapping = False
+    if {"fold", "date"}.issubset(predictions.columns):
+        dates = pd.to_datetime(predictions["date"], errors="coerce", utc=True)
+        if dates.notna().all():
+            windows = (
+                predictions.assign(_promotion_date=dates)
+                .groupby("fold", sort=True)["_promotion_date"]
+                .agg(["min", "max"])
+            )
+            temporal_folds_nonoverlapping = len(windows) >= policy.min_folds and all(
+                windows.iloc[i]["max"] < windows.iloc[i + 1]["min"]
+                for i in range(len(windows) - 1)
+            )
+
     checks = {
         "metric_accounting_consistent": metric_accounting_consistent,
         "enough_rows": int(metrics.rows) >= policy.min_oos_rows,
@@ -91,6 +111,7 @@ def evaluate_research_promotion(
         # artifact: stale/manually supplied fold counts could otherwise make a
         # benchmark appear to have more temporal validation than it contains.
         "fold_accounting_consistent": observed_folds == int(folds_used),
+        "temporal_folds_nonoverlapping": temporal_folds_nonoverlapping,
         "calibration_fold_evidence": fold_evidence_ok,
         "positive_skill": (
             metrics.brier_skill is not None
@@ -110,16 +131,12 @@ def evaluate_research_promotion(
             and abs(float(metrics.calibration_gap))
             <= policy.max_abs_calibration_gap
         ),
-        # Aggregate calibration can hide folds with large errors of opposite sign.
-        # Promotion therefore requires stability on the already-OOS predictions.
         "calibration_fold_stability": (
             calibration.folds >= policy.min_folds
             and calibration.worst_abs_fold_gap is not None
             and calibration.worst_abs_fold_gap
             <= policy.max_worst_fold_calibration_gap
         ),
-        # A worst-fold bound alone can still admit repeated, material drift. The
-        # dispersion gate detects instability across the full OOS fold history.
         "calibration_drift_dispersion": (
             calibration.folds >= policy.min_folds
             and calibration.fold_gap_std is not None
@@ -131,10 +148,6 @@ def evaluate_research_promotion(
             and calibration.expected_calibration_error
             <= policy.max_expected_calibration_error
         ),
-        # Pooled ECE can cancel calibration errors when the same probability bin
-        # behaves differently across time. Require every OOS fold to remain below
-        # a separate ECE ceiling so local reliability failures cannot be hidden by
-        # otherwise well-calibrated periods.
         "calibration_worst_fold_ece": (
             calibration.folds >= policy.min_folds
             and calibration.worst_fold_expected_calibration_error is not None
