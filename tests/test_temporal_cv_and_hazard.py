@@ -30,8 +30,6 @@ def test_purged_panel_folds_keep_horizon_between_fit_and_test():
 
 def test_purged_panel_folds_calibration_embargo_handles_irregular_dates():
     regular = pd.date_range("2000-01-01", periods=75, freq="30D")
-    # Remove dates around several prospective boundaries so the assertion is
-    # about elapsed target time rather than a fixed number of rows.
     dates = regular.delete([17, 18, 33, 51])
     index = pd.MultiIndex.from_product(
         [dates, ["a", "b"]], names=["date", "entity_id"]
@@ -52,14 +50,18 @@ def test_purged_panel_folds_calibration_embargo_handles_irregular_dates():
 
 def test_purged_panel_folds_reject_missing_dates():
     index = pd.MultiIndex.from_arrays(
-        [
-            [pd.Timestamp("2000-01-01"), pd.NaT, pd.Timestamp("2000-03-01")],
-            ["a", "a", "a"],
-        ],
+        [[pd.Timestamp("2000-01-01"), pd.NaT, pd.Timestamp("2000-03-01")], ["a", "a", "a"]],
         names=["date", "entity_id"],
     )
     with pytest.raises(ValueError, match="missing timestamps"):
         purged_panel_folds(index, horizon_days=30)
+
+
+def test_purged_panel_folds_reject_zero_horizon():
+    dates = pd.date_range("2000-01-01", periods=30, freq="30D")
+    index = pd.MultiIndex.from_product([dates, ["a", "b"]], names=["date", "entity_id"])
+    with pytest.raises(ValueError, match="horizon_days must be positive"):
+        purged_panel_folds(index, horizon_days=0)
 
 
 def test_cloglog_hazard_learns_monotone_signal():
