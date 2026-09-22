@@ -22,6 +22,7 @@ from preact.models.placebo import run_placebo_benchmark
 from preact.models.sliced_evaluation import temporal_slice_metrics
 from preact.models.stress_tests import run_unseen_entity_stress
 from preact.models.experiment_manifest import build_manifest
+from preact.models.oos_lineage import benchmark_suite_feature_lineage
 from preact.models.reporting import attach_prediction_feature_provenance, benchmark_diagnostics, temporal_fold_audits, validate_benchmark_suite_fold_audits, validate_prediction_fold_audits
 from preact.models.research_governance import evaluate_research_promotion
 
@@ -37,6 +38,14 @@ def _require_suite_fold_audits(suite, *, context: str):
         return validate_benchmark_suite_fold_audits(suite)
     except (ValueError, TypeError) as exc:
         raise RuntimeError(f"{context} produced an invalid OOS artifact: {exc}") from exc
+
+
+def _require_suite_feature_lineage(suite, fingerprints, *, context: str):
+    """Persist nested OOS lineage only after temporal and PIT provenance validation."""
+    try:
+        return benchmark_suite_feature_lineage(suite, fingerprints)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(f"{context} produced invalid point-in-time lineage: {exc}") from exc
 
 
 DEFAULT_FEATURES = ("cow_nmc:cinc", "cow_nmc:milex", "cow_nmc:milper", "cow_nmc:tpop", "cow_nmc:upop", "cow_nmc:energy", "cow_nmc:irst", "cow_nmc:pec")
@@ -101,12 +110,14 @@ def main() -> None:
             geographic_stress={"status":"not_run","reason":str(exc)}
         else:
             stress_audits=_require_suite_fold_audits(stress_suite, context="geographic stress")
-            geographic_stress={"train_entities":list(split.train_entities),"test_entities":list(split.test_entities),"folds":stress_audits,"models":_serialize_models(stress_suite.models)}
+            stress_lineage=_require_suite_feature_lineage(stress_suite, dataset.feature_snapshot_fingerprints, context="geographic stress")
+            geographic_stress={"train_entities":list(split.train_entities),"test_entities":list(split.test_entities),"folds":stress_audits,"feature_lineage":stress_lineage,"models":_serialize_models(stress_suite.models)}
     placebo=None
     if not args.skip_placebo:
         p=run_placebo_benchmark(features,dataset.target,horizon_days=args.horizon_days,min_train_dates=args.min_train_dates,calibration_dates=args.calibration_dates,test_dates_per_fold=args.test_dates_per_fold,bootstrap_samples=max(100,args.bootstrap_samples//4))
         placebo_audits=_require_suite_fold_audits(p.benchmark, context="placebo")
-        placebo={"max_brier_skill":p.max_brier_skill,"folds":placebo_audits,"models":_serialize_models(p.benchmark.models)}
+        placebo_lineage=_require_suite_feature_lineage(p.benchmark, dataset.feature_snapshot_fingerprints, context="placebo")
+        placebo={"max_brier_skill":p.max_brier_skill,"folds":placebo_audits,"feature_lineage":placebo_lineage,"models":_serialize_models(p.benchmark.models)}
     ablations={}
     if args.run_ablations:
         for family_name,prefixes in DEFAULT_FAMILIES.items():
@@ -116,7 +127,8 @@ def main() -> None:
             except (ValueError,TypeError) as exc:
                 ablations[family_name]={"status":"not_run","reason":str(exc)}; continue
             ablation_audits=_require_suite_fold_audits(r.benchmark, context=f"ablation {family_name}")
-            ablations[family_name]={"removed_columns":list(r.removed_columns),"folds":ablation_audits,"models":_serialize_models(r.benchmark.models)}
+            ablation_lineage=_require_suite_feature_lineage(r.benchmark, dataset.feature_snapshot_fingerprints, context=f"ablation {family_name}")
+            ablations[family_name]={"removed_columns":list(r.removed_columns),"folds":ablation_audits,"feature_lineage":ablation_lineage,"models":_serialize_models(r.benchmark.models)}
     stability={name:[asdict(item) for item in temporal_slice_metrics(b.predictions)] for name,b in benchmarks.items()}
     manifest=build_manifest(features,dataset.target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None})
     output=Path(args.output_dir)/manifest.dataset_fingerprint[:16]; output.mkdir(parents=True,exist_ok=True)
