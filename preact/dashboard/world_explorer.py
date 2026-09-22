@@ -28,6 +28,10 @@ from preact.intelligence.gdelt_relationships import (
     load_recent_relationship_edges,
     relationship_evidence,
 )
+from preact.intelligence.structural_relationships import (
+    StructuralRelationshipBatch,
+    load_documented_allies,
+)
 
 
 @dataclass(frozen=True)
@@ -314,10 +318,33 @@ def render_world_explorer(sidebar) -> None:
     edges = _relationship_edges_from_session()
     as_of = pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
     try:
+        structural_batch: StructuralRelationshipBatch = load_documented_allies(
+            os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"),
+            graph_path=os.getenv(
+                "PREACT_GRAPH_DB",
+                "data/history/preact_graph.duckdb",
+            ),
+            focal_iso3=selected_iso3,
+            valid_at=as_of,
+            knowledge_cutoff=as_of,
+        )
+    except Exception as exc:
+        st.error(f"Structural relationship layer unavailable: {exc}")
+        structural_batch = StructuralRelationshipBatch(
+            focal_iso3=selected_iso3,
+            allies=(),
+            evidence=pd.DataFrame(),
+            mapping_snapshot_checksum=None,
+            mapping_retrieved_at=None,
+            status="error",
+        )
+
+    try:
         signals = build_relationship_layer(
             edges,
             focal_iso3=selected_iso3,
             as_of=as_of,
+            structural_allies=structural_batch.allies,
             min_events=1,
         )
     except ValueError as exc:
@@ -491,9 +518,39 @@ def render_world_explorer(sidebar) -> None:
                     "open the source before drawing a substantive conclusion."
                 )
 
+        if structural_batch.evidence.empty:
+            st.caption(
+                "No active documented formal-alliance relation is available for this "
+                "country at the current valid/knowledge time from the loaded graph."
+            )
+        else:
+            st.markdown("#### Documented structural relations")
+            structural_rows = structural_batch.evidence.copy()
+            structural_rows["counterpart"] = structural_rows["counterpart_iso3"].map(
+                lambda code: (
+                    f"{COUNTRY_BY_ISO3[code].flag} {COUNTRY_BY_ISO3[code].name}"
+                    if code in COUNTRY_BY_ISO3
+                    else code
+                )
+            )
+            st.dataframe(
+                structural_rows[
+                    [
+                        "counterpart",
+                        "relation_type",
+                        "source",
+                        "dataset_version",
+                        "valid_from",
+                        "valid_to",
+                        "source_ref",
+                    ]
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
         st.caption(
-            "News/event interactions use recency decay and confidence. A formal alliance "
-            "can only be labelled from a structural source such as a treaty/alliance dataset."
+            "News/event interactions use recency decay and confidence. Formal alliances "
+            "are shown only from explicit structural records active at the requested time."
         )
 
     with sources:
@@ -534,6 +591,12 @@ def render_world_explorer(sidebar) -> None:
                         else None
                     ),
                     "cameo_country_map_retrieved_at": batch.country_map_retrieved_at,
+                    "structural_relation_status": structural_batch.status,
+                    "structural_mapping_snapshot": (
+                        structural_batch.mapping_snapshot_checksum[:16] + "…"
+                        if structural_batch.mapping_snapshot_checksum
+                        else None
+                    ),
                     "snapshot_checksums": [
                         checksum[:16] + "…" for checksum in batch.snapshot_checksums[-8:]
                     ],
