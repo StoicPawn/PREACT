@@ -91,6 +91,20 @@ def test_snapshot_loader_is_point_in_time_and_deduplicates_events(tmp_path):
     assert evidence.iloc[0]["goldstein"] == 6.0
     assert evidence.iloc[0]["source_url"] == "https://example.test/a"
 
+    france_only = relationship_evidence(
+        batch,
+        focal_iso3="ITA",
+        counterpart_iso3="FRA",
+    )
+    assert len(france_only) == 1
+
+    germany_only = relationship_evidence(
+        batch,
+        focal_iso3="ITA",
+        counterpart_iso3="DEU",
+    )
+    assert germany_only.empty
+
 
 def test_snapshot_loader_excludes_snapshots_retrieved_after_as_of(tmp_path):
     store = SourceSnapshotStore(tmp_path / "snapshots")
