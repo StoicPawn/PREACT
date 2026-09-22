@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from preact.feature_store.temporal import entity_feature_snapshot, entity_feature_snapshot_with_lineage
+from preact.feature_store.temporal import (
+    entity_feature_snapshot,
+    entity_feature_snapshot_with_lineage,
+    feature_snapshot_fingerprint,
+)
 from preact.history.schema import KnowledgeMode
 
 
@@ -126,3 +130,34 @@ def test_feature_lineage_fails_closed_when_provenance_is_incomplete() -> None:
         entity_feature_snapshot_with_lineage(
             StubWarehouse([row]), entity_id="iso3:AAA", cutoff=CUTOFF
         )
+
+
+def test_feature_snapshot_fingerprint_is_order_independent_and_vintage_sensitive() -> None:
+    first = _row(
+        valid_from=datetime(2020, 1, 1, tzinfo=UTC),
+        known_at=datetime(2020, 1, 10, tzinfo=UTC),
+        variable="stress",
+        record_id="record-stress",
+    )
+    second = _row(
+        valid_from=datetime(2019, 12, 1, tzinfo=UTC),
+        known_at=datetime(2020, 1, 9, tzinfo=UTC),
+        variable="trade",
+        record_id="record-trade",
+    )
+    _, lineage = entity_feature_snapshot_with_lineage(
+        StubWarehouse([first, second]), entity_id="iso3:AAA", cutoff=CUTOFF
+    )
+    reversed_lineage = dict(reversed(list(lineage.items())))
+    assert feature_snapshot_fingerprint(lineage) == feature_snapshot_fingerprint(reversed_lineage)
+
+    revised = dict(second, record_id="record-trade-v2", dataset_version="v2")
+    _, revised_lineage = entity_feature_snapshot_with_lineage(
+        StubWarehouse([first, revised]), entity_id="iso3:AAA", cutoff=CUTOFF
+    )
+    assert feature_snapshot_fingerprint(lineage) != feature_snapshot_fingerprint(revised_lineage)
+
+
+def test_feature_snapshot_fingerprint_rejects_unverifiable_lineage() -> None:
+    with pytest.raises(ValueError, match="fingerprint missing or invalid for stress"):
+        feature_snapshot_fingerprint({"stress": {"record_id": "record-1"}})
