@@ -1,4 +1,4 @@
-"""Geographic/cross-entity stress tests for predictive models."""
+"""Geographic/cross-entity and data-quality stress tests for predictive models."""
 
 from __future__ import annotations
 
@@ -17,6 +17,68 @@ class EntityHoldout:
     test_entities: tuple[str, ...]
     fraction: float
     salt: str
+
+
+@dataclass(frozen=True)
+class FeatureDegradation:
+    """Audit record for a deterministic source/feature missingness stress."""
+
+    columns: tuple[str, ...]
+    fraction: float
+    salt: str
+    rows: int
+    degraded_cells: int
+
+
+def deterministic_feature_degradation(
+    features: pd.DataFrame,
+    *,
+    columns: Iterable[str],
+    fraction: float = 0.20,
+    salt: str = "preact-source-degradation-v1",
+) -> tuple[pd.DataFrame, FeatureDegradation]:
+    """Mask selected feature cells reproducibly without consulting outcomes.
+
+    Selection is a pure function of the row identity, feature name and salt.  It
+    therefore cannot accidentally condition a stress scenario on the target or
+    on model errors.  The original frame is never mutated.  This primitive is
+    intended for source-outage/missingness sensitivity runs on the same OOS
+    protocol as the primary benchmark.
+    """
+
+    if not 0.0 < fraction <= 1.0:
+        raise ValueError("fraction must be in (0, 1]")
+    requested = tuple(dict.fromkeys(str(c) for c in columns))
+    if not requested:
+        raise ValueError("at least one feature column is required")
+    missing = tuple(c for c in requested if c not in features.columns)
+    if missing:
+        raise KeyError(f"unknown feature columns: {missing}")
+    if not features.index.is_unique:
+        raise ValueError("features index must be unique for auditable degradation")
+
+    degraded = features.copy()
+    cells = 0
+    threshold = int(fraction * (2**64))
+    for column in requested:
+        mask = []
+        for key in features.index:
+            identity = repr(key)
+            digest = sha256(f"{salt}|{identity}|{column}".encode("utf-8")).digest()
+            score = int.from_bytes(digest[:8], "big")
+            mask.append(score < threshold)
+        if mask:
+            cells += int(sum(mask))
+            degraded.loc[mask, column] = float("nan")
+
+    audit = FeatureDegradation(
+        columns=requested,
+        fraction=float(fraction),
+        salt=salt,
+        rows=len(features),
+        degraded_cells=cells,
+    )
+    return degraded, audit
 
 
 def deterministic_entity_holdout(
@@ -42,8 +104,6 @@ def deterministic_entity_holdout(
     test = tuple(entity for entity, score in scored if score < fraction)
     train = tuple(entity for entity, score in scored if score >= fraction)
 
-    # Small samples can occasionally produce an empty side; use deterministic
-    # ordering rather than random mutation so the split remains reproducible.
     if not test:
         n_test = max(1, round(len(entities) * fraction))
         ordered = tuple(entity for entity, _ in sorted(scored, key=lambda x: x[1]))
