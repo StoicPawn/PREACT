@@ -23,6 +23,10 @@ from preact.analytics.relationship_signals import (
 )
 from preact.data_hub.gateway import SharedProviderGateway
 from preact.intelligence.country_profile import IndicatorSnapshot, fetch_current_country_profile
+from preact.intelligence.gdelt_relationships import (
+    GDELTRelationshipBatch,
+    load_recent_relationship_edges,
+)
 
 
 @dataclass(frozen=True)
@@ -271,6 +275,33 @@ def render_world_explorer(sidebar) -> None:
         selected_iso3 = chosen_iso3
         st.session_state["world_selected_iso3"] = selected_iso3
 
+    relationship_batches = st.session_state.setdefault("world_relationship_batches", {})
+    if st.button("Refresh recent relationship evidence", use_container_width=True):
+        with st.spinner("Reading archived GDELT realtime snapshots…"):
+            try:
+                batch = load_recent_relationship_edges(
+                    os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"),
+                    lookback_days=14,
+                    min_events=1,
+                )
+                relationship_batches["latest"] = batch
+                st.session_state["world_relationship_edges"] = batch.edges
+                if batch.snapshot_count == 0:
+                    st.warning(
+                        "No archived realtime GDELT event snapshots are available yet. "
+                        "Start the shared collector on the PREACT lab first."
+                    )
+            except Exception as exc:
+                st.error(f"Recent relationship evidence unavailable: {exc}")
+
+    batch: GDELTRelationshipBatch | None = relationship_batches.get("latest")
+    if batch is not None and batch.snapshot_count:
+        st.caption(
+            f"Relationship evidence: {batch.resolved_interaction_count:,} resolved "
+            f"interactions from {batch.snapshot_count:,} archived GDELT snapshots · "
+            f"strict ISO-3 coverage {batch.resolution_rate:.1%}"
+        )
+
     edges = _relationship_edges_from_session()
     as_of = pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
     try:
@@ -402,9 +433,23 @@ def render_world_explorer(sidebar) -> None:
                 "World Bank pulls are current-vintage snapshots. Historical replay must "
                 "use snapshots that were actually known by the replay cutoff."
             )
+        if batch is not None and batch.snapshot_count:
+            st.markdown("#### Relationship snapshot provenance")
+            st.write(
+                {
+                    "snapshot_count": batch.snapshot_count,
+                    "raw_event_rows": batch.raw_event_count,
+                    "resolved_interactions": batch.resolved_interaction_count,
+                    "strict_iso3_resolution_rate": round(batch.resolution_rate, 4),
+                    "newest_retrieved_at": batch.newest_retrieved_at,
+                    "snapshot_checksums": [
+                        checksum[:16] + "…" for checksum in batch.snapshot_checksums[-8:]
+                    ],
+                }
+            )
         st.write(
             "Relationship runtime input is the world_relationship_edges session DataFrame "
-            "using the PREACT state-interaction edge schema. Persistent hub integration follows."
+            "built from immutable GDELT realtime snapshots in the shared data hub."
         )
 
     st.divider()
