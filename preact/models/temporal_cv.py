@@ -22,9 +22,10 @@ class TemporalFold:
     def audit_record(self) -> dict[str, object]:
         """Serialize the complete temporal split contract for experiment artifacts.
 
-        Persisting both embargo boundaries and the actual window endpoints makes
-        leakage checks reproducible without reconstructing folds from a mutable
-        dataset. Counts make truncated or accidentally empty windows visible.
+        Persisting both embargo boundaries and the exact OOS dates makes leakage
+        checks reproducible without reconstructing folds from a mutable dataset.
+        Exact dates matter for irregular panels: endpoints plus a count cannot
+        detect an interior date being silently substituted.
         """
         return {
             "fold": int(self.fold),
@@ -39,6 +40,7 @@ class TemporalFold:
             "test_start": self.test_start.isoformat(),
             "test_end": self.test_end.isoformat(),
             "test_dates": len(self.test_dates),
+            "test_date_values": [value.isoformat() for value in self.test_dates],
         }
 
 
