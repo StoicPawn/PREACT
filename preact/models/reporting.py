@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping
 
 import pandas as pd
 
-from .benchmark_suite import ModelBenchmark
+from .benchmark_suite import BenchmarkSuiteResult, ModelBenchmark
 from .calibration_diagnostics import temporal_calibration_diagnostics
 from .temporal_cv import TemporalFold
 
@@ -29,7 +29,7 @@ def validate_prediction_fold_audits(
     """Reject OOS artifacts inconsistent with their persisted temporal contract.
 
     The report and parquet predictions are separate files, so serialization alone
-    cannot guarantee that they describe the same evaluation windows.  Validate
+    cannot guarantee that they describe the same evaluation windows. Validate
     fold identity, test-window boundaries, unique test-date counts, and both
     embargo inequalities before an experiment is persisted or consumed.
     """
@@ -86,6 +86,24 @@ def validate_prediction_fold_audits(
             raise ValueError(f"prediction dates do not match test window for fold {fold}")
         if int(fold_dates.nunique()) != expected_test_dates:
             raise ValueError(f"prediction test-date count does not match audit for fold {fold}")
+
+
+def validate_benchmark_suite_fold_audits(
+    suite: BenchmarkSuiteResult,
+) -> list[dict[str, object]]:
+    """Validate every model in a suite against the suite's temporal split contract.
+
+    Stress, placebo and ablation suites are first-class OOS evidence too. Keeping
+    this check at suite level prevents nested diagnostics from bypassing the same
+    fail-closed temporal integrity checks used by the primary benchmark.
+    """
+    audits = temporal_fold_audits(suite.folds)
+    for name, benchmark in suite.models.items():
+        try:
+            validate_prediction_fold_audits(benchmark.predictions, audits)
+        except ValueError as exc:
+            raise ValueError(f"benchmark {name} violates temporal fold audit: {exc}") from exc
+    return audits
 
 
 def benchmark_diagnostics(benchmark: ModelBenchmark) -> dict[str, Any]:
