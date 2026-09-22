@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+import pycountry
 from preact.analytics.gdelt_graphs import build_state_graph
 from preact.data_hub.gdelt_realtime import parse_event_zip
 from preact.history.connectors.base import BulkFileConnector
@@ -22,6 +23,9 @@ from preact.history.connectors.gdelt_cameo import (
     build_cameo_country_map,
 )
 from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
+
+
+_VALID_ISO3 = {country.alpha_3 for country in pycountry.countries}
 
 
 @dataclass(frozen=True)
@@ -65,8 +69,16 @@ def _event_frame(
         raw_count += 1
         actor1_raw = str(row.get("Actor1CountryCode") or "").strip().upper()
         actor2_raw = str(row.get("Actor2CountryCode") or "").strip().upper()
-        actor1 = country_map.resolve(actor1_raw) if country_map is not None else actor1_raw
-        actor2 = country_map.resolve(actor2_raw) if country_map is not None else actor2_raw
+        actor1 = (
+            country_map.resolve(actor1_raw)
+            if country_map is not None
+            else (actor1_raw if actor1_raw in _VALID_ISO3 else None)
+        )
+        actor2 = (
+            country_map.resolve(actor2_raw)
+            if country_map is not None
+            else (actor2_raw if actor2_raw in _VALID_ISO3 else None)
+        )
 
         if not actor1 or not actor2 or actor1 == actor2:
             continue
