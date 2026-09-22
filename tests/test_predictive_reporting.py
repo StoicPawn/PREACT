@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from preact.models.benchmark_suite import BenchmarkMetrics, DependenceDiagnostic, ModelBenchmark, SkillInterval
-from preact.models.reporting import benchmark_diagnostics, temporal_fold_audits, validate_prediction_fold_audits
+from preact.models.reporting import attach_prediction_feature_provenance, benchmark_diagnostics, temporal_fold_audits, validate_prediction_fold_audits
 from preact.models.temporal_cv import TemporalFold
 
 
@@ -91,3 +91,23 @@ def test_prediction_fold_audit_rejects_interior_date_substitution_with_same_endp
     substituted = pd.DataFrame({"fold": [4, 4, 4], "date": ["2020-07-01", "2020-09-01", "2020-10-01"]})
     with pytest.raises(ValueError, match="exact audited test dates"):
         validate_prediction_fold_audits(substituted, temporal_fold_audits([fold]))
+
+
+def test_oos_predictions_receive_exact_point_in_time_feature_fingerprint():
+    idx = pd.MultiIndex.from_tuples(
+        [(pd.Timestamp("2020-07-01"), "A"), (pd.Timestamp("2020-08-01"), "A")],
+        names=["date", "entity_id"],
+    )
+    fingerprints = pd.Series(["a" * 64, "b" * 64], index=idx, name="feature_snapshot_fingerprint")
+    predictions = pd.DataFrame({"date": ["2020-07-01", "2020-08-01"], "entity_id": ["A", "A"], "fold": [3, 3]})
+    enriched = attach_prediction_feature_provenance(predictions, fingerprints)
+    assert enriched["feature_snapshot_fingerprint"].tolist() == ["a" * 64, "b" * 64]
+
+
+def test_oos_feature_provenance_fails_closed_on_missing_or_invalid_vintage():
+    idx = pd.MultiIndex.from_tuples([(pd.Timestamp("2020-07-01"), "A")], names=["date", "entity_id"])
+    predictions = pd.DataFrame({"date": ["2020-07-01", "2020-08-01"], "entity_id": ["A", "A"]})
+    with pytest.raises(ValueError, match="missing point-in-time feature provenance"):
+        attach_prediction_feature_provenance(predictions, pd.Series(["a" * 64], index=idx))
+    with pytest.raises(ValueError, match="invalid feature snapshot fingerprint"):
+        attach_prediction_feature_provenance(predictions.iloc[:1], pd.Series(["not-a-sha"], index=idx))
