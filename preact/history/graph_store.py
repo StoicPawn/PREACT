@@ -115,3 +115,28 @@ class HistoricalGraphStore:
             )
             cols=[x[0] for x in cursor.description]
             return [dict(zip(cols,row)) for row in cursor.fetchall()]
+
+
+    def list_entities(
+        self,
+        *,
+        relation_type: str | None = None,
+    ) -> list[str]:
+        """List unique entities represented in the historical relation graph."""
+
+        clauses = []
+        params: list[object] = []
+        if relation_type:
+            clauses.append("relation_type = ?")
+            params.append(relation_type)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT subject_entity_id AS entity_id FROM historical_relations"
+                + where
+                + " UNION SELECT object_entity_id AS entity_id FROM historical_relations"
+                + where
+                + " ORDER BY entity_id",
+                [*params, *params],
+            ).fetchall()
+        return [str(row[0]) for row in rows if row[0]]

@@ -21,18 +21,60 @@ def _read_zip_csv(
     payload: bytes,
     *,
     filename_predicate: Callable[[str], bool],
+    _prefix: str = "",
 ) -> tuple[str, list[dict[str, str]]]:
+    """Read a matching CSV from a ZIP, including nested provider ZIPs.
+
+    COW NMC v7 is distributed as an outer bundle containing separate abridged
+    and supplemental ZIP archives. Prefer abridged nested archives because they
+    contain the canonical CINC + six-indicator research table.
+    """
+
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-        names = [
-            name for name in archive.namelist()
-            if name.lower().endswith(".csv") and filename_predicate(name.lower())
+        members = archive.namelist()
+        csv_names = [
+            name
+            for name in members
+            if name.lower().endswith(".csv")
+            and filename_predicate(name.lower())
         ]
-        if not names:
-            available = [n for n in archive.namelist() if n.lower().endswith(".csv")]
-            raise ValueError(f"matching CSV not found; available={available}")
-        name = sorted(names, key=len)[0]
-        text = archive.read(name).decode("utf-8-sig", errors="replace")
-    return name, [dict(row) for row in csv.DictReader(io.StringIO(text))]
+        if csv_names:
+            name = sorted(csv_names, key=lambda item: (len(item), item.lower()))[0]
+            text = archive.read(name).decode("utf-8-sig", errors="replace")
+            qualified = f"{_prefix}{name}" if _prefix else name
+            return qualified, [
+                dict(row) for row in csv.DictReader(io.StringIO(text))
+            ]
+
+        nested = [name for name in members if name.lower().endswith(".zip")]
+        # For NMC-style bundles, inspect abridged/main data before supplements.
+        nested = sorted(
+            nested,
+            key=lambda name: (
+                0 if "abridged" in name.lower() else 1,
+                1 if "supp" in name.lower() else 0,
+                name.lower(),
+            ),
+        )
+        diagnostics: list[str] = []
+        for name in nested:
+            try:
+                return _read_zip_csv(
+                    archive.read(name),
+                    filename_predicate=filename_predicate,
+                    _prefix=f"{_prefix}{name}!/",
+                )
+            except (ValueError, zipfile.BadZipFile) as exc:
+                diagnostics.append(f"{name}: {exc}")
+
+        visible = [
+            name for name in members
+            if name.lower().endswith((".csv", ".txt", ".dta", ".zip"))
+        ]
+        raise ValueError(
+            "matching CSV not found in ZIP bundle; "
+            f"candidate_members={visible}; nested_diagnostics={diagnostics}"
+        )
 
 
 class COWNetworkConnector:
@@ -105,6 +147,14 @@ class COWNetworkConnector:
     def parse_nmc(payload: bytes) -> list[dict[str, str]]:
         _, rows = _read_zip_csv(
             payload,
-            filename_predicate=lambda n: "nmc" in n and "supp" not in n,
+            filename_predicate=lambda n: (
+                "supp" not in n
+                and "source" not in n
+                and (
+                    "nmc" in n
+                    or "abridged" in n
+                    or "capabil" in n
+                )
+            ),
         )
         return rows

@@ -17,6 +17,11 @@ from preact.history.connectors.cow import COWStateSystemConnector
 from preact.history.connectors.cow_network import COWNetworkConnector
 from preact.history.connectors.cshapes import CShapesConnector
 from preact.history.connectors.maddison import Maddison2023Connector
+from preact.history.connectors.powell_thyne import (
+    CURRENT_2026_08_29,
+    PowellThyneCoupConnector,
+    PowellThyneRelease,
+)
 from preact.history.connectors.sipri import SIPRIMilitaryExpenditureConnector
 from preact.history.connectors.un_population import UNPopulationConnector
 from preact.history.connectors.geonames import (
@@ -32,6 +37,7 @@ from preact.history.warehouse import HistoricalWarehouse
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.wave1_pipeline import Wave1IngestionPipeline
 from preact.projections.historical_workbooks import maddison_records, sipri_milex_records
+from preact.projections.powell_thyne import powell_thyne_records
 from preact.projections.cow_network import (
     cow_alliance_relations,
     cow_contiguity_relations,
@@ -252,6 +258,41 @@ class Wave1Runner:
             },
         )
 
+    def run_powell_thyne(
+        self,
+        *,
+        release: PowellThyneRelease = CURRENT_2026_08_29,
+    ) -> SourceRun:
+        connector = PowellThyneCoupConnector(
+            BulkFileConnector("powell_thyne_coups", self.snapshot_store)
+        )
+        acquired = connector.acquire(release)
+        rows = connector.parse(acquired.payload, format=release.format)
+        records = powell_thyne_records(
+            rows,
+            release=release,
+            retrieved_at=acquired.retrieved_at,
+            snapshot_checksum=acquired.snapshot.checksum_sha256,
+        )
+        inserted = self.warehouse.insert_records(records)
+        attempts = sum(record.variable == "event:coup_attempt" for record in records)
+        successes = sum(record.variable == "event:coup_success" for record in records)
+        return SourceRun(
+            "powell_thyne_coups",
+            "success",
+            rows=len(records),
+            snapshots=1,
+            metadata={
+                "release": release.release_id,
+                "published_at": release.published_at.isoformat(),
+                "provisional": release.provisional,
+                "attempts": attempts,
+                "successes": successes,
+                "rows_inserted": inserted,
+                "snapshot_checksum": acquired.snapshot.checksum_sha256,
+            },
+        )
+
     def run_un_population(
         self,
         *,
@@ -434,6 +475,7 @@ class Wave1Runner:
                     ("world_bank", self.run_world_bank),
                     ("unhcr", self.run_unhcr),
                     ("un_wpp", self.run_un_population),
+                    ("powell_thyne_coups", self.run_powell_thyne),
                 ]
             )
 

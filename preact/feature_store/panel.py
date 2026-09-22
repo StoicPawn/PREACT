@@ -12,8 +12,10 @@ from preact.history.graph_store import HistoricalGraphStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.history.schema import KnowledgeMode
 from .graph import graph_feature_snapshot
+from .event_history import event_history_features
 from .graph_targets import binary_relation_target
-from .temporal import entity_feature_snapshot
+from .temporal import entity_feature_snapshot_with_lineage, feature_snapshot_fingerprint
+from .temporal_dynamics import entity_temporal_dynamics_snapshot
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class PanelDataset:
     entities: tuple[str, ...]
     horizon_days: int
     target_relation_type: str
+    feature_snapshot_fingerprints: pd.Series
 
 
 def build_relation_risk_panel(
@@ -36,12 +39,16 @@ def build_relation_risk_panel(
     horizon_days: int,
     graph_recent_days: int = 365,
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
+    include_event_history: bool = True,
+    include_temporal_dynamics: bool = True,
+    outcome_observed_through: datetime | None = None,
 ) -> PanelDataset:
     entities=tuple(sorted(set(entity_ids)))
     dates=tuple(sorted(set(cutoffs)))
     variables=tuple(feature_variables)
     feature_rows=[]
     target_values={}
+    snapshot_fingerprints={}
 
     for entity_id in entities:
         y=binary_relation_target(
@@ -50,16 +57,27 @@ def build_relation_risk_panel(
             cutoffs=dates,
             relation_type=target_relation_type,
             horizon_days=horizon_days,
+            outcome_observed_through=outcome_observed_through,
         )
         for cutoff in dates:
             row={"date":pd.Timestamp(cutoff),"entity_id":entity_id}
-            row.update(entity_feature_snapshot(
+            point_features, lineage = entity_feature_snapshot_with_lineage(
                 warehouse,
                 entity_id=entity_id,
                 cutoff=cutoff,
                 variables=variables,
                 knowledge_mode=knowledge_mode,
-            ))
+            )
+            row.update(point_features)
+            snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = feature_snapshot_fingerprint(lineage)
+            if include_temporal_dynamics:
+                row.update(entity_temporal_dynamics_snapshot(
+                    warehouse,
+                    entity_id=entity_id,
+                    cutoff=cutoff,
+                    variables=variables,
+                    knowledge_mode=knowledge_mode,
+                ))
             row.update(graph_feature_snapshot(
                 graph,
                 entity_id=entity_id,
@@ -67,14 +85,28 @@ def build_relation_risk_panel(
                 recent_days=graph_recent_days,
                 knowledge_mode=knowledge_mode,
             ))
+            if include_event_history:
+                row.update(event_history_features(
+                    graph,
+                    entity_id=entity_id,
+                    cutoff=cutoff,
+                    knowledge_mode=knowledge_mode,
+                ))
             feature_rows.append(row)
-            target_values[(pd.Timestamp(cutoff),entity_id)]=int(y.loc[pd.Timestamp(cutoff)])
+            target_values[(pd.Timestamp(cutoff),entity_id)] = y.loc[pd.Timestamp(cutoff)]
 
     if not feature_rows:
-        return PanelDataset(pd.DataFrame(),pd.Series(dtype=int),entities,horizon_days,target_relation_type)
+        empty_index = pd.MultiIndex.from_arrays([[], []], names=["date", "entity_id"])
+        fingerprints = pd.Series(index=empty_index, dtype="string", name="feature_snapshot_fingerprint")
+        return PanelDataset(pd.DataFrame(),pd.Series(dtype="Int64"),entities,horizon_days,target_relation_type,fingerprints)
 
     frame=pd.DataFrame(feature_rows).set_index(["date","entity_id"]).sort_index()
-    target=pd.Series(target_values,dtype=int)
+    target=pd.Series(target_values,dtype="Int64")
     target.index=pd.MultiIndex.from_tuples(target.index,names=["date","entity_id"])
     target=target.reindex(frame.index)
-    return PanelDataset(frame,target,entities,horizon_days,target_relation_type)
+    fingerprints=pd.Series(snapshot_fingerprints,dtype="string",name="feature_snapshot_fingerprint")
+    fingerprints.index=pd.MultiIndex.from_tuples(fingerprints.index,names=["date","entity_id"])
+    fingerprints=fingerprints.reindex(frame.index)
+    if fingerprints.isna().any():
+        raise ValueError("missing point-in-time feature provenance for panel rows")
+    return PanelDataset(frame,target,entities,horizon_days,target_relation_type,fingerprints)

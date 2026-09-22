@@ -28,6 +28,7 @@ SOURCE_PLAN:tuple[PlannedSource,...]=(
     PlannedSource("un_wpp",1,7,"population/demography",("geonames",),("atlas","replay","scenario")),
     PlannedSource("maddison",1,8,"long-run GDP/population estimates",("geonames",),("atlas","replay","scenario")),
     PlannedSource("sipri",1,9,"military expenditure/security capacity",("geonames",),("atlas","replay","scenario")),
+    PlannedSource("powell_thyne_coups",1,10,"coup attempts/success outcomes",("geonames",),("atlas","replay")),
     PlannedSource("fred_alfred",2,1,"real-time-vintage macro evidence",(),("replay","scenario")),
     PlannedSource("bis",2,2,"banking/credit/financial stress",(),("atlas","replay","scenario")),
     PlannedSource("imf",2,3,"fiscal/external/financial macro",(),("atlas","replay","scenario")),
