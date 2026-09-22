@@ -308,7 +308,7 @@ def render_world_explorer(sidebar) -> None:
         st.caption(
             f"Relationship evidence: {batch.resolved_interaction_count:,} resolved "
             f"interactions from {batch.snapshot_count:,} archived GDELT snapshots · "
-            f"strict ISO-3 coverage {batch.resolution_rate:.1%}"
+            f"CAMEO→ISO3 coverage {batch.resolution_rate:.1%}"
         )
 
     edges = _relationship_edges_from_session()
@@ -526,7 +526,7 @@ def render_world_explorer(sidebar) -> None:
                     "snapshot_count": batch.snapshot_count,
                     "raw_event_rows": batch.raw_event_count,
                     "resolved_interactions": batch.resolved_interaction_count,
-                    "strict_iso3_resolution_rate": round(batch.resolution_rate, 4),
+                    "cameo_to_iso3_resolution_rate": round(batch.resolution_rate, 4),
                     "newest_retrieved_at": batch.newest_retrieved_at,
                     "cameo_country_map_snapshot": (
                         batch.country_map_snapshot_checksum[:16] + "…"
