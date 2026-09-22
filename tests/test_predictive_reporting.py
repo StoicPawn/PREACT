@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from preact.models.benchmark_suite import (
     BenchmarkMetrics,
@@ -6,7 +7,11 @@ from preact.models.benchmark_suite import (
     ModelBenchmark,
     SkillInterval,
 )
-from preact.models.reporting import benchmark_diagnostics, temporal_fold_audits
+from preact.models.reporting import (
+    benchmark_diagnostics,
+    temporal_fold_audits,
+    validate_prediction_fold_audits,
+)
 from preact.models.temporal_cv import TemporalFold
 
 
@@ -57,21 +62,22 @@ def test_benchmark_diagnostics_serializes_temporal_calibration_drift_from_oos_pr
     assert drift["expected_calibration_error"] >= abs(drift["weighted_gap"])
 
 
-def test_temporal_fold_audits_preserve_full_embargo_contract():
-    fit = tuple(pd.to_datetime(["2020-01-01", "2020-02-01"]))
-    calibration = tuple(pd.to_datetime(["2020-04-01", "2020-05-01"]))
-    test = tuple(pd.to_datetime(["2020-07-01", "2020-08-01"]))
-    fold = TemporalFold(
+def _audit_fold() -> TemporalFold:
+    return TemporalFold(
         fold=3,
-        fit_dates=fit,
-        calibration_dates=calibration,
-        test_dates=test,
+        fit_dates=tuple(pd.to_datetime(["2020-01-01", "2020-02-01"])),
+        calibration_dates=tuple(pd.to_datetime(["2020-04-01", "2020-05-01"])),
+        test_dates=tuple(pd.to_datetime(["2020-07-01", "2020-08-01"])),
         fit_cutoff=pd.Timestamp("2020-03-01"),
         calibration_start=pd.Timestamp("2020-04-01"),
         training_cutoff=pd.Timestamp("2020-06-01"),
         test_start=pd.Timestamp("2020-07-01"),
         test_end=pd.Timestamp("2020-08-01"),
     )
+
+
+def test_temporal_fold_audits_preserve_full_embargo_contract():
+    fold = _audit_fold()
 
     payload = temporal_fold_audits([fold])
 
@@ -81,3 +87,30 @@ def test_temporal_fold_audits_preserve_full_embargo_contract():
     assert payload[0]["fit_dates"] == 2
     assert payload[0]["calibration_dates"] == 2
     assert payload[0]["test_dates"] == 2
+
+
+def test_prediction_fold_audit_validation_accepts_matching_oos_artifact():
+    fold = _audit_fold()
+    predictions = pd.DataFrame(
+        {"fold": [3, 3, 3], "date": ["2020-07-01", "2020-07-01", "2020-08-01"]}
+    )
+
+    validate_prediction_fold_audits(predictions, temporal_fold_audits([fold]))
+
+
+def test_prediction_fold_audit_validation_rejects_window_or_embargo_mismatch():
+    fold = _audit_fold()
+    predictions = pd.DataFrame(
+        {"fold": [3, 3], "date": ["2020-07-01", "2020-09-01"]}
+    )
+    audits = temporal_fold_audits([fold])
+
+    with pytest.raises(ValueError, match="test window"):
+        validate_prediction_fold_audits(predictions, audits)
+
+    broken = [dict(audits[0], training_cutoff="2020-05-01T00:00:00")]
+    valid_predictions = pd.DataFrame(
+        {"fold": [3, 3], "date": ["2020-07-01", "2020-08-01"]}
+    )
+    with pytest.raises(ValueError, match="embargo ordering"):
+        validate_prediction_fold_audits(valid_predictions, broken)
