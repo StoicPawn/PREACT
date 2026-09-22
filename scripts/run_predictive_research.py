@@ -31,6 +31,14 @@ def _serialize_models(models):
     return {name: benchmark_diagnostics(model) for name, model in models.items()}
 
 
+def _require_suite_fold_audits(suite, *, context: str):
+    """Treat a produced suite with invalid OOS provenance as corruption, not unavailability."""
+    try:
+        return validate_benchmark_suite_fold_audits(suite)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(f"{context} produced an invalid OOS artifact: {exc}") from exc
+
+
 DEFAULT_FEATURES = ("cow_nmc:cinc", "cow_nmc:milex", "cow_nmc:milper", "cow_nmc:tpop", "cow_nmc:upop", "cow_nmc:energy", "cow_nmc:irst", "cow_nmc:pec")
 
 
@@ -89,13 +97,15 @@ def main() -> None:
     if not args.skip_geographic_stress:
         try:
             split, stress_suite=run_unseen_entity_stress(features,dataset.target,horizon_days=args.horizon_days,min_train_dates=args.min_train_dates,calibration_dates=args.calibration_dates,test_dates_per_fold=args.test_dates_per_fold,bootstrap_samples=max(100,args.bootstrap_samples//2))
-            stress_audits=validate_benchmark_suite_fold_audits(stress_suite)
+        except (ValueError,TypeError) as exc:
+            geographic_stress={"status":"not_run","reason":str(exc)}
+        else:
+            stress_audits=_require_suite_fold_audits(stress_suite, context="geographic stress")
             geographic_stress={"train_entities":list(split.train_entities),"test_entities":list(split.test_entities),"folds":stress_audits,"models":_serialize_models(stress_suite.models)}
-        except (ValueError,TypeError) as exc: geographic_stress={"status":"not_run","reason":str(exc)}
     placebo=None
     if not args.skip_placebo:
         p=run_placebo_benchmark(features,dataset.target,horizon_days=args.horizon_days,min_train_dates=args.min_train_dates,calibration_dates=args.calibration_dates,test_dates_per_fold=args.test_dates_per_fold,bootstrap_samples=max(100,args.bootstrap_samples//4))
-        placebo_audits=validate_benchmark_suite_fold_audits(p.benchmark)
+        placebo_audits=_require_suite_fold_audits(p.benchmark, context="placebo")
         placebo={"max_brier_skill":p.max_brier_skill,"folds":placebo_audits,"models":_serialize_models(p.benchmark.models)}
     ablations={}
     if args.run_ablations:
@@ -103,8 +113,9 @@ def main() -> None:
             if not any(any(str(c).startswith(p) for p in prefixes) for c in features.columns): continue
             try:
                 r=run_family_ablation(features,dataset.target,family_name=family_name,prefixes=prefixes,horizon_days=args.horizon_days,min_train_dates=args.min_train_dates,calibration_dates=args.calibration_dates,test_dates_per_fold=args.test_dates_per_fold,bootstrap_samples=max(100,args.bootstrap_samples//4))
-                ablation_audits=validate_benchmark_suite_fold_audits(r.benchmark)
-            except ValueError as exc: ablations[family_name]={"status":"not_run","reason":str(exc)}; continue
+            except (ValueError,TypeError) as exc:
+                ablations[family_name]={"status":"not_run","reason":str(exc)}; continue
+            ablation_audits=_require_suite_fold_audits(r.benchmark, context=f"ablation {family_name}")
             ablations[family_name]={"removed_columns":list(r.removed_columns),"folds":ablation_audits,"models":_serialize_models(r.benchmark.models)}
     stability={name:[asdict(item) for item in temporal_slice_metrics(b.predictions)] for name,b in benchmarks.items()}
     manifest=build_manifest(features,dataset.target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None})
