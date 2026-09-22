@@ -26,6 +26,7 @@ _VALID_ISO3 = {country.alpha_3 for country in pycountry.countries}
 @dataclass(frozen=True)
 class GDELTRelationshipBatch:
     edges: pd.DataFrame
+    events: pd.DataFrame
     snapshot_checksums: tuple[str, ...]
     snapshot_count: int
     raw_event_count: int
@@ -150,6 +151,7 @@ def load_recent_relationship_edges(
     if not frames:
         return GDELTRelationshipBatch(
             edges=pd.DataFrame(),
+            events=pd.DataFrame(),
             snapshot_checksums=tuple(sorted(set(checksums))),
             snapshot_count=len(candidates),
             raw_event_count=raw_event_count,
@@ -176,6 +178,7 @@ def load_recent_relationship_edges(
 
     return GDELTRelationshipBatch(
         edges=graph.edges,
+        events=events,
         snapshot_checksums=tuple(sorted(set(checksums))),
         snapshot_count=len(candidates),
         raw_event_count=raw_event_count,
@@ -185,4 +188,79 @@ def load_recent_relationship_edges(
     )
 
 
-__all__ = ["GDELTRelationshipBatch", "load_recent_relationship_edges"]
+def relationship_evidence(
+    batch: GDELTRelationshipBatch,
+    *,
+    focal_iso3: str,
+    counterpart_iso3: str | None = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    """Return recent event-level evidence behind a focal-country relationship view."""
+
+    focal = str(focal_iso3).strip().upper()
+    counterpart = (
+        str(counterpart_iso3).strip().upper() if counterpart_iso3 is not None else None
+    )
+    if len(focal) != 3:
+        raise ValueError("focal_iso3 must be an ISO-3-like code")
+    if counterpart is not None and len(counterpart) != 3:
+        raise ValueError("counterpart_iso3 must be an ISO-3-like code")
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if batch.events.empty:
+        return pd.DataFrame(
+            columns=[
+                "event_date",
+                "counterpart_iso3",
+                "goldstein",
+                "tone",
+                "num_articles",
+                "source_url",
+                "retrieved_at",
+            ]
+        )
+
+    frame = batch.events.copy()
+    mask = (frame["actor1_country"] == focal) | (frame["actor2_country"] == focal)
+    frame = frame.loc[mask].copy()
+    if frame.empty:
+        return pd.DataFrame(
+            columns=[
+                "event_date",
+                "counterpart_iso3",
+                "goldstein",
+                "tone",
+                "num_articles",
+                "source_url",
+                "retrieved_at",
+            ]
+        )
+    frame["counterpart_iso3"] = frame["actor2_country"].where(
+        frame["actor1_country"] == focal,
+        frame["actor1_country"],
+    )
+    if counterpart is not None:
+        frame = frame.loc[frame["counterpart_iso3"] == counterpart]
+
+    columns = [
+        "event_date",
+        "counterpart_iso3",
+        "goldstein",
+        "tone",
+        "num_articles",
+        "source_url",
+        "retrieved_at",
+    ]
+    return (
+        frame.loc[:, columns]
+        .sort_values(["event_date", "num_articles"], ascending=[False, False])
+        .head(limit)
+        .reset_index(drop=True)
+    )
+
+
+__all__ = [
+    "GDELTRelationshipBatch",
+    "load_recent_relationship_edges",
+    "relationship_evidence",
+]
