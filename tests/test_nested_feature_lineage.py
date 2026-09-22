@@ -69,3 +69,19 @@ def test_nested_artifact_cannot_smuggle_a_preexisting_fingerprint():
     attached = attach_prediction_feature_provenance(predictions, _fingerprints())
 
     assert attached.loc[0, "feature_snapshot_fingerprint"] == "a" * 64
+
+
+def test_nested_artifact_rejects_duplicate_oos_provenance_keys():
+    """Duplicate OOS rows cannot silently share one lineage record and bias metrics."""
+    predictions = pd.DataFrame(
+        {
+            "fold": [0, 0],
+            "date": ["2020-01-01", "2020-01-01"],
+            "entity_id": ["A", "A"],
+            "y_true": [0, 0],
+            "y_prob": [0.1, 0.1],
+        }
+    )
+
+    with pytest.raises(ValueError, match="duplicate OOS provenance keys"):
+        attach_prediction_feature_provenance(predictions, _fingerprints())
