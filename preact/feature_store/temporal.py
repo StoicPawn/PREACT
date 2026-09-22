@@ -26,6 +26,36 @@ def _numeric_scalar(value_json: str | None) -> float | None:
     return None
 
 
+def _assert_point_in_time_rows(
+    rows: Iterable[dict],
+    *,
+    cutoff: datetime,
+    knowledge_mode: KnowledgeMode,
+) -> None:
+    """Fail closed if a feature query returns evidence from the future.
+
+    The warehouse query is the primary temporal filter.  This second boundary is
+    intentionally kept in feature materialization so a future query/refactor bug
+    cannot silently turn into optimistic OOS performance.
+    """
+
+    cutoff_ts = pd.Timestamp(cutoff)
+    for row in rows:
+        valid_from = pd.Timestamp(row["valid_from"])
+        if valid_from > cutoff_ts:
+            raise ValueError(
+                "point-in-time feature leakage: valid_from is after prediction cutoff "
+                f"({valid_from.isoformat()} > {cutoff_ts.isoformat()})"
+            )
+        if knowledge_mode is KnowledgeMode.STRICT_AS_KNOWN:
+            known_at = pd.Timestamp(row["known_at"])
+            if known_at > cutoff_ts:
+                raise ValueError(
+                    "point-in-time feature leakage: known_at is after prediction cutoff "
+                    f"({known_at.isoformat()} > {cutoff_ts.isoformat()})"
+                )
+
+
 def entity_feature_snapshot(
     warehouse: HistoricalWarehouse,
     *,
@@ -41,6 +71,7 @@ def entity_feature_snapshot(
         variables=variables,
         knowledge_mode=knowledge_mode,
     )
+    _assert_point_in_time_rows(rows, cutoff=cutoff, knowledge_mode=knowledge_mode)
     features: dict[str, float] = {}
     for row in rows:
         value = _numeric_scalar(row.get("value_json"))
