@@ -17,6 +17,43 @@ def temporal_fold_audits(folds: Iterable[TemporalFold]) -> list[dict[str, object
     return [fold.audit_record() for fold in folds]
 
 
+def attach_prediction_feature_provenance(
+    predictions: pd.DataFrame,
+    feature_snapshot_fingerprints: pd.Series,
+) -> pd.DataFrame:
+    """Attach exact point-in-time feature vintage fingerprints to OOS rows.
+
+    Fails closed when an OOS entity/date cannot be mapped uniquely to the
+    feature snapshot from which the model input was materialized.
+    """
+    required = {"date", "entity_id"}
+    missing = required.difference(predictions.columns)
+    if missing:
+        raise ValueError(f"predictions missing feature provenance keys: {sorted(missing)}")
+    if not isinstance(feature_snapshot_fingerprints.index, pd.MultiIndex):
+        raise TypeError("feature snapshot fingerprints must use a panel MultiIndex")
+    if feature_snapshot_fingerprints.index.has_duplicates:
+        raise ValueError("feature snapshot provenance contains duplicate panel keys")
+    if feature_snapshot_fingerprints.isna().any():
+        raise ValueError("feature snapshot provenance contains missing fingerprints")
+
+    provenance = feature_snapshot_fingerprints.rename("feature_snapshot_fingerprint").reset_index()
+    if not {"date", "entity_id"}.issubset(provenance.columns):
+        raise ValueError("feature snapshot provenance index must contain date and entity_id")
+    provenance["date"] = pd.to_datetime(provenance["date"], errors="raise", utc=True)
+    provenance["entity_id"] = provenance["entity_id"].astype(str)
+
+    out = predictions.drop(columns=["feature_snapshot_fingerprint"], errors="ignore").copy()
+    out["date"] = pd.to_datetime(out["date"], errors="raise", utc=True)
+    out["entity_id"] = out["entity_id"].astype(str)
+    out = out.merge(provenance, on=["date", "entity_id"], how="left", validate="many_to_one", sort=False)
+    if out["feature_snapshot_fingerprint"].isna().any():
+        raise ValueError("missing point-in-time feature provenance for OOS predictions")
+    if not out["feature_snapshot_fingerprint"].astype(str).str.fullmatch(r"[0-9a-f]{64}").all():
+        raise ValueError("invalid feature snapshot fingerprint in OOS predictions")
+    return out
+
+
 def validate_prediction_fold_audits(
     predictions: pd.DataFrame,
     audits: Iterable[Mapping[str, object]],
