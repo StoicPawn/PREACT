@@ -5,7 +5,10 @@ import zipfile
 
 from preact.data_hub.gdelt_realtime import _EVENT_COLUMNS
 from preact.history.snapshot_store import SourceSnapshotStore
-from preact.intelligence.gdelt_relationships import load_recent_relationship_edges
+from preact.intelligence.gdelt_relationships import (
+    load_recent_relationship_edges,
+    relationship_evidence,
+)
 
 
 def _event_zip(rows):
@@ -81,6 +84,12 @@ def test_snapshot_loader_is_point_in_time_and_deduplicates_events(tmp_path):
     assert edge["target"] == "FRA"
     assert edge["events"] == 1
     assert edge["avg_goldstein"] == 6.0
+
+    evidence = relationship_evidence(batch, focal_iso3="ITA")
+    assert len(evidence) == 1
+    assert evidence.iloc[0]["counterpart_iso3"] == "FRA"
+    assert evidence.iloc[0]["goldstein"] == 6.0
+    assert evidence.iloc[0]["source_url"] == "https://example.test/a"
 
 
 def test_snapshot_loader_excludes_snapshots_retrieved_after_as_of(tmp_path):
