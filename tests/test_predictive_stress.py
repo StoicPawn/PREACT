@@ -5,6 +5,7 @@ import pytest
 from preact.models.reporting import validate_benchmark_suite_fold_audits
 from preact.models.stress_tests import (
     deterministic_entity_holdout,
+    deterministic_feature_degradation,
     run_unseen_entity_stress,
 )
 
@@ -33,6 +34,40 @@ def _stress_fixture():
     p = 1 / (1 + np.exp(-(-2 + 1.2 * x["trend"] + 0.4 * x["x"])))
     y = pd.Series(rng.binomial(1, p), index=idx)
     return x, y
+
+
+def test_feature_degradation_is_reproducible_and_scoped():
+    x, _ = _stress_fixture()
+    original = x.copy(deep=True)
+    a, audit_a = deterministic_feature_degradation(x, columns=["x"], fraction=0.3, salt="outage")
+    b, audit_b = deterministic_feature_degradation(x, columns=["x"], fraction=0.3, salt="outage")
+
+    pd.testing.assert_frame_equal(a, b)
+    assert audit_a == audit_b
+    assert audit_a.degraded_cells == int(a["x"].isna().sum())
+    assert 0 < audit_a.degraded_cells < len(x)
+    pd.testing.assert_series_equal(a["trend"], original["trend"])
+    pd.testing.assert_frame_equal(x, original)
+
+
+def test_feature_degradation_selection_does_not_depend_on_outcomes():
+    x, y = _stress_fixture()
+    degraded, _ = deterministic_feature_degradation(x, columns=["x"], fraction=0.25, salt="source-a")
+    flipped = 1 - y
+    degraded_after_target_change, _ = deterministic_feature_degradation(
+        x, columns=["x"], fraction=0.25, salt="source-a"
+    )
+    assert flipped.index.equals(y.index)
+    pd.testing.assert_frame_equal(degraded, degraded_after_target_change)
+
+
+def test_feature_degradation_fails_closed_on_unknown_column_or_duplicate_index():
+    x, _ = _stress_fixture()
+    with pytest.raises(KeyError, match="unknown feature columns"):
+        deterministic_feature_degradation(x, columns=["does_not_exist"])
+    duplicated = pd.concat([x.iloc[:1], x])
+    with pytest.raises(ValueError, match="index must be unique"):
+        deterministic_feature_degradation(duplicated, columns=["x"])
 
 
 def test_unseen_entity_stress_never_trains_on_holdout_entities():
