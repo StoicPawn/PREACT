@@ -30,6 +30,27 @@ class FeatureDegradation:
     degraded_cells: int
 
 
+@dataclass(frozen=True)
+class ModelDegradationImpact:
+    """OOS metric change caused by feature/source degradation."""
+
+    model: str
+    clean_brier_skill: float | None
+    degraded_brier_skill: float | None
+    brier_skill_delta: float | None
+    clean_brier: float | None
+    degraded_brier: float | None
+    brier_delta: float | None
+
+
+@dataclass(frozen=True)
+class FeatureDegradationStressResult:
+    audit: FeatureDegradation
+    clean: BenchmarkSuiteResult
+    degraded: BenchmarkSuiteResult
+    impacts: tuple[ModelDegradationImpact, ...]
+
+
 def deterministic_feature_degradation(
     features: pd.DataFrame,
     *,
@@ -37,14 +58,7 @@ def deterministic_feature_degradation(
     fraction: float = 0.20,
     salt: str = "preact-source-degradation-v1",
 ) -> tuple[pd.DataFrame, FeatureDegradation]:
-    """Mask selected feature cells reproducibly without consulting outcomes.
-
-    Selection is a pure function of the row identity, feature name and salt.  It
-    therefore cannot accidentally condition a stress scenario on the target or
-    on model errors.  The original frame is never mutated.  This primitive is
-    intended for source-outage/missingness sensitivity runs on the same OOS
-    protocol as the primary benchmark.
-    """
+    """Mask selected feature cells reproducibly without consulting outcomes."""
 
     if not 0.0 < fraction <= 1.0:
         raise ValueError("fraction must be in (0, 1]")
@@ -63,22 +77,83 @@ def deterministic_feature_degradation(
     for column in requested:
         mask = []
         for key in features.index:
-            identity = repr(key)
-            digest = sha256(f"{salt}|{identity}|{column}".encode("utf-8")).digest()
+            digest = sha256(f"{salt}|{repr(key)}|{column}".encode("utf-8")).digest()
             score = int.from_bytes(digest[:8], "big")
             mask.append(score < threshold)
         if mask:
             cells += int(sum(mask))
             degraded.loc[mask, column] = float("nan")
 
-    audit = FeatureDegradation(
+    return degraded, FeatureDegradation(
         columns=requested,
         fraction=float(fraction),
         salt=salt,
         rows=len(features),
         degraded_cells=cells,
     )
-    return degraded, audit
+
+
+def run_feature_degradation_stress(
+    features: pd.DataFrame,
+    target: pd.Series,
+    *,
+    columns: Iterable[str],
+    horizon_days: int,
+    fraction: float = 0.20,
+    salt: str = "preact-source-degradation-v1",
+    min_train_dates: int = 20,
+    calibration_dates: int = 5,
+    test_dates_per_fold: int = 5,
+    bootstrap_samples: int = 1000,
+    random_state: int = 42,
+) -> FeatureDegradationStressResult:
+    """Measure OOS skill loss under deterministic source/feature missingness.
+
+    Clean and degraded suites use identical targets, temporal protocol and random
+    state. The mask is target-blind, so the resulting deltas quantify robustness
+    without selecting outages from outcomes or model errors.
+    """
+
+    degraded_features, audit = deterministic_feature_degradation(
+        features, columns=columns, fraction=fraction, salt=salt
+    )
+    kwargs = dict(
+        horizon_days=horizon_days,
+        min_train_dates=min_train_dates,
+        calibration_dates=calibration_dates,
+        test_dates_per_fold=test_dates_per_fold,
+        bootstrap_samples=bootstrap_samples,
+        random_state=random_state,
+    )
+    clean = run_benchmark_suite(features, target, **kwargs)
+    degraded = run_benchmark_suite(degraded_features, target, **kwargs)
+    if clean.folds != degraded.folds:
+        raise ValueError("degradation stress changed temporal folds")
+    if tuple(clean.models) != tuple(degraded.models):
+        raise ValueError("degradation stress changed benchmark model set")
+
+    impacts = []
+    for name in clean.models:
+        clean_metrics = clean.models[name].metrics
+        degraded_metrics = degraded.models[name].metrics
+        skill_delta = None
+        if clean_metrics.brier_skill is not None and degraded_metrics.brier_skill is not None:
+            skill_delta = float(degraded_metrics.brier_skill - clean_metrics.brier_skill)
+        brier_delta = None
+        if clean_metrics.brier is not None and degraded_metrics.brier is not None:
+            brier_delta = float(degraded_metrics.brier - clean_metrics.brier)
+        impacts.append(
+            ModelDegradationImpact(
+                model=name,
+                clean_brier_skill=clean_metrics.brier_skill,
+                degraded_brier_skill=degraded_metrics.brier_skill,
+                brier_skill_delta=skill_delta,
+                clean_brier=clean_metrics.brier,
+                degraded_brier=degraded_metrics.brier,
+                brier_delta=brier_delta,
+            )
+        )
+    return FeatureDegradationStressResult(audit, clean, degraded, tuple(impacts))
 
 
 def deterministic_entity_holdout(
@@ -103,7 +178,6 @@ def deterministic_entity_holdout(
 
     test = tuple(entity for entity, score in scored if score < fraction)
     train = tuple(entity for entity, score in scored if score >= fraction)
-
     if not test:
         n_test = max(1, round(len(entities) * fraction))
         ordered = tuple(entity for entity, _ in sorted(scored, key=lambda x: x[1]))
@@ -130,11 +204,7 @@ def run_unseen_entity_stress(
     if not isinstance(features.index, pd.MultiIndex) or "entity_id" not in features.index.names:
         raise TypeError("features must have entity_id in a MultiIndex")
     entities = tuple(sorted(set(features.index.get_level_values("entity_id").astype(str))))
-    split = deterministic_entity_holdout(
-        entities,
-        fraction=holdout_fraction,
-        salt=holdout_salt,
-    )
+    split = deterministic_entity_holdout(entities, fraction=holdout_fraction, salt=holdout_salt)
     result = run_benchmark_suite(
         features,
         target,
