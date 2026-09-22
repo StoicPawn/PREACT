@@ -30,6 +30,11 @@ def attach_prediction_feature_provenance(
     missing = required.difference(predictions.columns)
     if missing:
         raise ValueError(f"predictions missing feature provenance keys: {sorted(missing)}")
+    prediction_keys = ["date", "entity_id"]
+    if "fold" in predictions.columns:
+        prediction_keys.insert(0, "fold")
+    if predictions.duplicated(prediction_keys).any():
+        raise ValueError("predictions contain duplicate OOS provenance keys")
     if not isinstance(feature_snapshot_fingerprints.index, pd.MultiIndex):
         raise TypeError("feature snapshot fingerprints must use a panel MultiIndex")
     if feature_snapshot_fingerprints.index.has_duplicates:
