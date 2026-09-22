@@ -33,7 +33,7 @@ class StructuralRelationshipBatch:
 
 
 def _utc(value: datetime | pd.Timestamp | None) -> datetime:
-    stamp = pd.Timestamp(value or datetime.now(timezone.utc))
+    stamp = pd.Timestamp(value if value is not None else datetime.now(timezone.utc))
     if stamp.tzinfo is None:
         stamp = stamp.tz_localize("UTC")
     else:
