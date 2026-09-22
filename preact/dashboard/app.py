@@ -19,6 +19,7 @@ import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
 from preact.dashboard.gdelt_module import render_gdelt_module
+from preact.dashboard.world_explorer import render_world_explorer
 from preact.simulation import (
     SimulationComparison,
     SimulationRepository,
@@ -397,6 +398,7 @@ def render_fiscal_sandbox(sidebar: DeltaGenerator) -> None:
 
 
 MODULES: Dict[str, Callable[[DeltaGenerator], None]] = {
+    "World Explorer": render_world_explorer,
     "Intelligence GDELT": render_gdelt_module,
     "Fiscal Sandbox": render_fiscal_sandbox,
 }
