@@ -26,6 +26,7 @@ from preact.intelligence.country_profile import IndicatorSnapshot, fetch_current
 from preact.intelligence.gdelt_relationships import (
     GDELTRelationshipBatch,
     load_recent_relationship_edges,
+    relationship_evidence,
 )
 
 
@@ -276,12 +277,19 @@ def render_world_explorer(sidebar) -> None:
         st.session_state["world_selected_iso3"] = selected_iso3
 
     relationship_batches = st.session_state.setdefault("world_relationship_batches", {})
+    lookback_days = st.selectbox(
+        "Relationship evidence window",
+        options=[7, 14, 30, 60],
+        index=1,
+        format_func=lambda days: f"Last {days} days",
+        key="world_relationship_lookback",
+    )
     if st.button("Refresh recent relationship evidence", use_container_width=True):
         with st.spinner("Reading archived GDELT realtime snapshots…"):
             try:
                 batch = load_recent_relationship_edges(
                     os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"),
-                    lookback_days=14,
+                    lookback_days=int(lookback_days),
                     min_events=1,
                 )
                 relationship_batches["latest"] = batch
@@ -394,17 +402,94 @@ def render_world_explorer(sidebar) -> None:
 
     with relations:
         st.markdown("#### Relationship evidence")
+        relationship_rows = map_frame.loc[
+            ~map_frame["status"].isin(["no_evidence", "selected"]),
+            ["iso3", "flag", "country", "status_label", "score", "confidence", "event_count"],
+        ].sort_values(["confidence", "event_count"], ascending=False)
         if not signals:
             st.info(
                 "No relationship evidence is loaded in this runtime yet. The map remains "
                 "neutral rather than inventing geopolitical relationships."
             )
         else:
-            rows = map_frame.loc[
-                ~map_frame["status"].isin(["no_evidence", "selected"]),
-                ["flag", "country", "status_label", "score", "confidence", "event_count"],
-            ].sort_values(["confidence", "event_count"], ascending=False)
-            st.dataframe(rows, hide_index=True, use_container_width=True)
+            st.dataframe(
+                relationship_rows.drop(columns=["iso3"]),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+        if batch is not None and not batch.events.empty:
+            counterpart_options = ["All"]
+            counterpart_options.extend(relationship_rows["iso3"].astype(str).tolist())
+            selected_counterpart = st.selectbox(
+                "Underlying event evidence",
+                options=counterpart_options,
+                format_func=lambda code: (
+                    "All counterparts"
+                    if code == "All"
+                    else (
+                        f"{COUNTRY_BY_ISO3[code].flag} {COUNTRY_BY_ISO3[code].name}"
+                        if code in COUNTRY_BY_ISO3
+                        else code
+                    )
+                ),
+                key="world_relationship_counterpart",
+            )
+            evidence = relationship_evidence(
+                batch,
+                focal_iso3=selected_iso3,
+                counterpart_iso3=None if selected_counterpart == "All" else selected_counterpart,
+                limit=100,
+            )
+            if evidence.empty:
+                st.caption("No event-level evidence for this selection.")
+            else:
+                evidence = evidence.copy()
+                evidence["counterpart"] = evidence["counterpart_iso3"].map(
+                    lambda code: (
+                        f"{COUNTRY_BY_ISO3[code].flag} {COUNTRY_BY_ISO3[code].name}"
+                        if code in COUNTRY_BY_ISO3
+                        else code
+                    )
+                )
+                evidence["event_date"] = pd.to_datetime(
+                    evidence["event_date"], errors="coerce"
+                ).dt.strftime("%Y-%m-%d")
+                display = evidence[
+                    [
+                        "event_date",
+                        "counterpart",
+                        "goldstein",
+                        "tone",
+                        "num_articles",
+                        "source_url",
+                    ]
+                ].rename(
+                    columns={
+                        "event_date": "Date",
+                        "counterpart": "Counterpart",
+                        "goldstein": "Goldstein",
+                        "tone": "Tone",
+                        "num_articles": "Articles",
+                        "source_url": "Source",
+                    }
+                )
+                st.dataframe(
+                    display,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Source": st.column_config.LinkColumn(
+                            "Source",
+                            display_text="open",
+                        )
+                    },
+                )
+                st.caption(
+                    "These are provider event records behind the aggregate map signal; "
+                    "open the source before drawing a substantive conclusion."
+                )
+
         st.caption(
             "News/event interactions use recency decay and confidence. A formal alliance "
             "can only be labelled from a structural source such as a treaty/alliance dataset."
