@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from preact.models.reporting import validate_benchmark_suite_fold_audits
 from preact.models.stress_tests import (
     deterministic_entity_holdout,
     run_unseen_entity_stress,
@@ -16,7 +18,7 @@ def test_entity_holdout_is_stable_and_disjoint():
     assert set(a.train_entities) | set(a.test_entities) == set(entities)
 
 
-def test_unseen_entity_stress_never_trains_on_holdout_entities():
+def _stress_fixture():
     dates = pd.date_range("2000-01-01", periods=55, freq="30D")
     entities = [f"c{i}" for i in range(12)]
     idx = pd.MultiIndex.from_product([dates, entities], names=["date", "entity_id"])
@@ -30,7 +32,11 @@ def test_unseen_entity_stress_never_trains_on_holdout_entities():
     )
     p = 1 / (1 + np.exp(-(-2 + 1.2 * x["trend"] + 0.4 * x["x"])))
     y = pd.Series(rng.binomial(1, p), index=idx)
+    return x, y
 
+
+def test_unseen_entity_stress_never_trains_on_holdout_entities():
+    x, y = _stress_fixture()
     split, result = run_unseen_entity_stress(
         x,
         y,
@@ -43,8 +49,29 @@ def test_unseen_entity_stress_never_trains_on_holdout_entities():
     )
 
     assert result.models
+    audits = validate_benchmark_suite_fold_audits(result)
+    assert len(audits) == len(result.folds)
     for model in result.models.values():
         if not model.predictions.empty:
             assert set(model.predictions["entity_id"]).issubset(
                 set(split.test_entities)
             )
+
+
+def test_nested_suite_audit_fails_closed_on_corrupted_oos_date():
+    x, y = _stress_fixture()
+    _, result = run_unseen_entity_stress(
+        x,
+        y,
+        horizon_days=30,
+        holdout_fraction=0.25,
+        min_train_dates=20,
+        calibration_dates=4,
+        test_dates_per_fold=4,
+        bootstrap_samples=20,
+    )
+    model = next(model for model in result.models.values() if not model.predictions.empty)
+    model.predictions.loc[model.predictions.index[0], "date"] = pd.Timestamp("1900-01-01")
+
+    with pytest.raises(ValueError, match="violates temporal fold audit"):
+        validate_benchmark_suite_fold_audits(result)
