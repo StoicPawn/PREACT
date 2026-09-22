@@ -15,7 +15,7 @@ from .event_history import event_history_features
 from .event_variable_history import event_variable_history_features
 from .graph import graph_feature_snapshot
 from .targets import binary_event_target
-from .temporal import entity_feature_snapshot
+from .temporal import entity_feature_snapshot_with_lineage, feature_snapshot_fingerprint
 from .temporal_dynamics import entity_temporal_dynamics_snapshot
 
 
@@ -26,6 +26,7 @@ class EventPanelDataset:
     entities: tuple[str, ...]
     horizon_days: int
     target_variable: str
+    feature_snapshot_fingerprints: pd.Series
 
 
 def build_event_risk_panel(
@@ -51,6 +52,7 @@ def build_event_risk_panel(
     variables = tuple(dict.fromkeys(str(v) for v in feature_variables))
     feature_rows: list[dict[str, object]] = []
     target_values: dict[tuple[pd.Timestamp, str], object] = {}
+    snapshot_fingerprints: dict[tuple[pd.Timestamp, str], str] = {}
 
     for entity_id in entities:
         target = binary_event_target(
@@ -66,15 +68,15 @@ def build_event_risk_panel(
                 "date": pd.Timestamp(cutoff),
                 "entity_id": entity_id,
             }
-            row.update(
-                entity_feature_snapshot(
-                    warehouse,
-                    entity_id=entity_id,
-                    cutoff=cutoff,
-                    variables=variables,
-                    knowledge_mode=knowledge_mode,
-                )
+            point_features, lineage = entity_feature_snapshot_with_lineage(
+                warehouse,
+                entity_id=entity_id,
+                cutoff=cutoff,
+                variables=variables,
+                knowledge_mode=knowledge_mode,
             )
+            row.update(point_features)
+            snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = feature_snapshot_fingerprint(lineage)
             if include_temporal_dynamics:
                 row.update(
                     entity_temporal_dynamics_snapshot(
@@ -114,17 +116,18 @@ def build_event_risk_panel(
                     )
                 )
             feature_rows.append(row)
-            target_values[(pd.Timestamp(cutoff), entity_id)] = target.loc[
-                pd.Timestamp(cutoff)
-            ]
+            target_values[(pd.Timestamp(cutoff), entity_id)] = target.loc[pd.Timestamp(cutoff)]
 
     if not feature_rows:
+        empty_index = pd.MultiIndex.from_arrays([[], []], names=["date", "entity_id"])
+        fingerprints = pd.Series(index=empty_index, dtype="string", name="feature_snapshot_fingerprint")
         return EventPanelDataset(
             pd.DataFrame(),
             pd.Series(dtype="Int64"),
             entities,
             horizon_days,
             target_variable,
+            fingerprints,
         )
     frame = (
         pd.DataFrame(feature_rows)
@@ -136,10 +139,16 @@ def build_event_risk_panel(
         y.index, names=["date", "entity_id"]
     )
     y = y.reindex(frame.index)
+    fingerprints = pd.Series(snapshot_fingerprints, dtype="string", name="feature_snapshot_fingerprint")
+    fingerprints.index = pd.MultiIndex.from_tuples(fingerprints.index, names=["date", "entity_id"])
+    fingerprints = fingerprints.reindex(frame.index)
+    if fingerprints.isna().any():
+        raise ValueError("missing point-in-time feature provenance for event panel rows")
     return EventPanelDataset(
         features=frame,
         target=y,
         entities=entities,
         horizon_days=horizon_days,
         target_variable=target_variable,
+        feature_snapshot_fingerprints=fingerprints,
     )
