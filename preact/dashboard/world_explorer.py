@@ -8,6 +8,7 @@ future live observation is expected to retain point-in-time provenance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
@@ -20,6 +21,8 @@ from preact.analytics.relationship_signals import (
     RelationshipSignal,
     build_relationship_layer,
 )
+from preact.data_hub.gateway import SharedProviderGateway
+from preact.intelligence.country_profile import IndicatorSnapshot, fetch_current_country_profile
 
 
 @dataclass(frozen=True)
@@ -298,25 +301,65 @@ def render_world_explorer(sidebar) -> None:
     st.markdown(f"## {country.flag} {country.name}")
     st.caption(f"{country.iso3} · as of {as_of:%Y-%m-%d %H:%M} UTC")
 
+    profiles = st.session_state.setdefault("world_country_profiles", {})
+    if st.button("Load / refresh current indicators", use_container_width=True):
+        with st.spinner("Fetching versioned World Bank indicators…"):
+            try:
+                gateway = SharedProviderGateway(
+                    os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub")
+                )
+                profiles[selected_iso3] = fetch_current_country_profile(
+                    selected_iso3,
+                    gateway=gateway,
+                )
+            except Exception as exc:
+                st.error(f"Country indicators unavailable: {exc}")
+    profile: Mapping[str, IndicatorSnapshot] = profiles.get(selected_iso3, {})
+
     economic, social, relations, sources = st.tabs(
         ["Economy", "Society", "Relationships", "Sources"]
     )
     with economic:
         cols = st.columns(2)
+        population = profile.get("population")
+        gdp = profile.get("gdp")
+        unemployment = profile.get("unemployment")
         with cols[0]:
-            _metric("Population", country.population_m, " M")
+            _metric("Population", population.display_value if population else None, " M")
         with cols[1]:
-            _metric("GDP", country.gdp_bn_usd, " B USD")
-        _metric("Unemployment", country.unemployment_pct, "%")
-        st.info("Versioned World Bank/official-series ingestion will populate this panel.")
+            _metric("GDP", gdp.display_value if gdp else None, " B USD")
+        _metric(
+            "Unemployment",
+            unemployment.display_value if unemployment else None,
+            "%",
+        )
+        if profile:
+            years = sorted(
+                {
+                    item.year
+                    for item in (population, gdp, unemployment)
+                    if item is not None and item.year is not None
+                }
+            )
+            st.caption(
+                "Latest available World Bank observations"
+                + (f" · years {years[0]}–{years[-1]}" if years else "")
+            )
+        else:
+            st.info("Load current indicators to populate the economic brief.")
 
     with social:
         cols = st.columns(2)
+        life = profile.get("life_expectancy")
+        internet = profile.get("internet_use")
+        urban = profile.get("urban_population")
         with cols[0]:
-            _metric("Life expectancy", country.life_expectancy, " years")
+            _metric("Life expectancy", life.display_value if life else None, " years")
         with cols[1]:
-            _metric("Internet use", country.internet_pct, "%")
-        st.info("Social, demographic, governance and human-development series are next.")
+            _metric("Internet use", internet.display_value if internet else None, "%")
+        _metric("Urban population", urban.display_value if urban else None, "%")
+        if not profile:
+            st.info("Load current indicators to populate the social brief.")
 
     with relations:
         st.markdown("#### Relationship evidence")
@@ -341,10 +384,27 @@ def render_world_explorer(sidebar) -> None:
             "Required provenance per observation: source, source reference, observed-at, "
             "known-at, dataset version and point-in-time fingerprint."
         )
+        if profile:
+            source_rows = []
+            for key, snapshot in profile.items():
+                source_rows.append(
+                    {
+                        "metric": snapshot.label,
+                        "indicator": snapshot.code,
+                        "year": snapshot.year,
+                        "retrieved_at": snapshot.retrieved_at,
+                        "snapshot": snapshot.snapshot_checksum,
+                        "replay_safe_before_retrieval": False,
+                    }
+                )
+            st.dataframe(pd.DataFrame(source_rows), hide_index=True, use_container_width=True)
+            st.caption(
+                "World Bank pulls are current-vintage snapshots. Historical replay must "
+                "use snapshots that were actually known by the replay cutoff."
+            )
         st.write(
-            "Current relationship runtime input is the world_relationship_edges session "
-            "DataFrame using the PREACT state-interaction edge schema. Persistent hub "
-            "integration follows."
+            "Relationship runtime input is the world_relationship_edges session DataFrame "
+            "using the PREACT state-interaction edge schema. Persistent hub integration follows."
         )
 
     st.divider()
