@@ -35,7 +35,7 @@ def _assert_point_in_time_rows(
 ) -> None:
     """Fail closed if a feature query returns evidence from the future.
 
-    The warehouse query is the primary temporal filter.  This second boundary is
+    The warehouse query is the primary temporal filter. This second boundary is
     intentionally kept in feature materialization so a future query/refactor bug
     cannot silently turn into optimistic OOS performance.
     """
@@ -76,6 +76,23 @@ def _feature_lineage(row: dict) -> dict[str, object]:
     canonical = json.dumps(lineage, sort_keys=True, separators=(",", ":"))
     lineage["fingerprint"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return lineage
+
+
+def feature_snapshot_fingerprint(lineage: dict[str, dict[str, object]]) -> str:
+    """Fingerprint the complete feature vintage used for one prediction row.
+
+    The variable name is part of the canonical payload, so swapping two source
+    vintages between features cannot preserve the snapshot identity.  Sorting
+    makes the result independent of warehouse/dict iteration order.
+    """
+    canonical_rows: list[dict[str, str]] = []
+    for variable, item in sorted(lineage.items()):
+        fingerprint = item.get("fingerprint")
+        if not isinstance(fingerprint, str) or len(fingerprint) != 64:
+            raise ValueError(f"feature lineage fingerprint missing or invalid for {variable}")
+        canonical_rows.append({"variable": str(variable), "fingerprint": fingerprint})
+    canonical = json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def entity_feature_snapshot_with_lineage(
