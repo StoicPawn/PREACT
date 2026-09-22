@@ -291,6 +291,7 @@ def render_world_explorer(sidebar) -> None:
                     os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"),
                     lookback_days=int(lookback_days),
                     min_events=1,
+                    acquire_country_map_if_missing=True,
                 )
                 relationship_batches["latest"] = batch
                 st.session_state["world_relationship_edges"] = batch.edges
@@ -307,7 +308,7 @@ def render_world_explorer(sidebar) -> None:
         st.caption(
             f"Relationship evidence: {batch.resolved_interaction_count:,} resolved "
             f"interactions from {batch.snapshot_count:,} archived GDELT snapshots · "
-            f"strict ISO-3 coverage {batch.resolution_rate:.1%}"
+            f"CAMEO→ISO3 coverage {batch.resolution_rate:.1%}"
         )
 
     edges = _relationship_edges_from_session()
@@ -525,8 +526,14 @@ def render_world_explorer(sidebar) -> None:
                     "snapshot_count": batch.snapshot_count,
                     "raw_event_rows": batch.raw_event_count,
                     "resolved_interactions": batch.resolved_interaction_count,
-                    "strict_iso3_resolution_rate": round(batch.resolution_rate, 4),
+                    "cameo_to_iso3_resolution_rate": round(batch.resolution_rate, 4),
                     "newest_retrieved_at": batch.newest_retrieved_at,
+                    "cameo_country_map_snapshot": (
+                        batch.country_map_snapshot_checksum[:16] + "…"
+                        if batch.country_map_snapshot_checksum
+                        else None
+                    ),
+                    "cameo_country_map_retrieved_at": batch.country_map_retrieved_at,
                     "snapshot_checksums": [
                         checksum[:16] + "…" for checksum in batch.snapshot_checksums[-8:]
                     ],

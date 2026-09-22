@@ -4,6 +4,7 @@ from .base import AcquiredDataset, BulkFileConnector
 from .chronicling_america import ChroniclingAmericaConnector
 from .cow import COWStateSystemConnector
 from .geonames import CountryCodeMap, GeoNamesCountryInfoConnector
+from .gdelt_cameo import CAMEOCountryMap, GDELTCAMEOCountryConnector
 from .cshapes import CShapesConnector
 from .maddison import Maddison2023Connector
 from .sipri import SIPRIMilitaryExpenditureConnector
@@ -19,6 +20,8 @@ __all__ = [
     "COWStateSystemConnector",
     "CountryCodeMap",
     "GeoNamesCountryInfoConnector",
+    "CAMEOCountryMap",
+    "GDELTCAMEOCountryConnector",
     "CShapesConnector",
     "Maddison2023Connector",
     "SIPRIMilitaryExpenditureConnector",

@@ -3,6 +3,8 @@ import io
 from datetime import datetime, timezone
 import zipfile
 
+import pytest
+
 from preact.data_hub.gdelt_realtime import _EVENT_COLUMNS
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.intelligence.gdelt_relationships import (
@@ -134,3 +136,61 @@ def test_snapshot_loader_excludes_snapshots_retrieved_after_as_of(tmp_path):
 
     assert batch.snapshot_count == 0
     assert batch.edges.empty
+
+
+def test_snapshot_loader_uses_snapshotted_cameo_country_mapping(tmp_path):
+    store = SourceSnapshotStore(tmp_path / "snapshots")
+    country_lookup = (
+        b"CODE\tLABEL\n"
+        b"ROM\tRomania\n"
+        b"ITA\tItaly\n"
+    )
+    mapping_snapshot = store.put(
+        source_id="gdelt",
+        payload=country_lookup,
+        retrieved_at=datetime(2026, 9, 22, 9, 0, tzinfo=timezone.utc),
+        source_url="https://gdeltproject.org/data/lookups/CAMEO.country.txt",
+        source_release="GDELT CAMEO country lookup",
+    )
+    payload = _event_zip(
+        [
+            {
+                "GLOBALEVENTID": "10",
+                "SQLDATE": "20260922",
+                "Actor1CountryCode": "ROM",
+                "Actor2CountryCode": "ITA",
+                "GoldsteinScale": "2",
+                "AvgTone": "1",
+                "NumArticles": "3",
+            }
+        ]
+    )
+    store.put(
+        source_id="gdelt",
+        payload=payload,
+        retrieved_at=datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc),
+        source_url="https://example.test/10.export.csv.zip",
+        operation="realtime_events",
+    )
+
+    batch = load_recent_relationship_edges(
+        tmp_path,
+        as_of=datetime(2026, 9, 22, 12, tzinfo=timezone.utc),
+        lookback_days=1,
+    )
+
+    assert batch.country_map_snapshot_checksum == mapping_snapshot.checksum_sha256
+    assert batch.country_map_retrieved_at == mapping_snapshot.retrieved_at
+    assert batch.resolved_interaction_count == 1
+    assert batch.edges.iloc[0]["source"] == "ROU"
+    assert batch.edges.iloc[0]["target"] == "ITA"
+
+
+def test_historical_as_of_cannot_fetch_current_mapping(tmp_path):
+    with pytest.raises(ValueError, match="current CAMEO map"):
+        load_recent_relationship_edges(
+            tmp_path,
+            as_of=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            lookback_days=1,
+            acquire_country_map_if_missing=True,
+        )

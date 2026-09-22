@@ -14,10 +14,15 @@ from typing import Iterable
 
 import pandas as pd
 import pycountry
-
 from preact.analytics.gdelt_graphs import build_state_graph
 from preact.data_hub.gdelt_realtime import parse_event_zip
-from preact.history.snapshot_store import SourceSnapshotStore
+from preact.history.connectors.base import BulkFileConnector
+from preact.history.connectors.gdelt_cameo import (
+    CAMEOCountryMap,
+    GDELTCAMEOCountryConnector,
+    build_cameo_country_map,
+)
+from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
 
 
 _VALID_ISO3 = {country.alpha_3 for country in pycountry.countries}
@@ -28,6 +33,8 @@ class GDELTRelationshipBatch:
     edges: pd.DataFrame
     events: pd.DataFrame
     snapshot_checksums: tuple[str, ...]
+    country_map_snapshot_checksum: str | None
+    country_map_retrieved_at: datetime | None
     snapshot_count: int
     raw_event_count: int
     resolved_interaction_count: int
@@ -54,17 +61,26 @@ def _event_frame(
     *,
     retrieved_at: datetime,
     as_of: datetime,
+    country_map: CAMEOCountryMap | None,
 ) -> tuple[pd.DataFrame, int]:
     records: list[dict[str, object]] = []
     raw_count = 0
     for row in rows:
         raw_count += 1
-        actor1 = str(row.get("Actor1CountryCode") or "").strip().upper()
-        actor2 = str(row.get("Actor2CountryCode") or "").strip().upper()
+        actor1_raw = str(row.get("Actor1CountryCode") or "").strip().upper()
+        actor2_raw = str(row.get("Actor2CountryCode") or "").strip().upper()
+        actor1 = (
+            country_map.resolve(actor1_raw)
+            if country_map is not None
+            else (actor1_raw if actor1_raw in _VALID_ISO3 else None)
+        )
+        actor2 = (
+            country_map.resolve(actor2_raw)
+            if country_map is not None
+            else (actor2_raw if actor2_raw in _VALID_ISO3 else None)
+        )
 
-        # CAMEO/GDELT actor codes are not always ISO-3. Until the entity-resolution
-        # crosswalk is installed, keep only codes that are unambiguously valid ISO-3.
-        if actor1 not in _VALID_ISO3 or actor2 not in _VALID_ISO3 or actor1 == actor2:
+        if not actor1 or not actor2 or actor1 == actor2:
             continue
 
         event_date = pd.to_datetime(
@@ -100,12 +116,30 @@ def _event_frame(
     return frame, raw_count
 
 
+def _country_map_snapshot(
+    store: SourceSnapshotStore,
+    *,
+    cutoff: datetime,
+) -> tuple[CAMEOCountryMap | None, SnapshotMetadata | None]:
+    candidates = [
+        item
+        for item in store.iter_metadata(source_id="gdelt")
+        if item.source_release == "GDELT CAMEO country lookup"
+        and item.retrieved_at <= cutoff
+    ]
+    if not candidates:
+        return None, None
+    snapshot = candidates[-1]
+    return build_cameo_country_map(store.read_payload(snapshot)), snapshot
+
+
 def load_recent_relationship_edges(
     root: str | Path,
     *,
     as_of: datetime | pd.Timestamp | None = None,
     lookback_days: int = 14,
     min_events: int = 1,
+    acquire_country_map_if_missing: bool = False,
 ) -> GDELTRelationshipBatch:
     """Read archived realtime event ZIPs and build leakage-safe state-interaction edges."""
 
@@ -118,6 +152,18 @@ def load_recent_relationship_edges(
     window_start = cutoff - timedelta(days=lookback_days)
 
     store = SourceSnapshotStore(Path(root) / "snapshots")
+    country_map, country_map_snapshot = _country_map_snapshot(store, cutoff=cutoff)
+    if country_map is None and acquire_country_map_if_missing:
+        if as_of is not None:
+            raise ValueError(
+                "cannot acquire a current CAMEO map for an explicit historical as_of"
+            )
+        acquired = GDELTCAMEOCountryConnector(
+            BulkFileConnector("gdelt", store)
+        ).acquire()
+        country_map = build_cameo_country_map(acquired.payload)
+        country_map_snapshot = acquired.snapshot
+
     candidates = [
         item
         for item in store.iter_metadata(source_id="gdelt")
@@ -137,6 +183,7 @@ def load_recent_relationship_edges(
             rows,
             retrieved_at=snapshot.retrieved_at,
             as_of=cutoff,
+            country_map=country_map,
         )
         raw_event_count += raw_count
         checksums.append(snapshot.checksum_sha256)
@@ -153,6 +200,12 @@ def load_recent_relationship_edges(
             edges=pd.DataFrame(),
             events=pd.DataFrame(),
             snapshot_checksums=tuple(sorted(set(checksums))),
+            country_map_snapshot_checksum=(
+                country_map_snapshot.checksum_sha256 if country_map_snapshot else None
+            ),
+            country_map_retrieved_at=(
+                country_map_snapshot.retrieved_at if country_map_snapshot else None
+            ),
             snapshot_count=len(candidates),
             raw_event_count=raw_event_count,
             resolved_interaction_count=0,
@@ -180,6 +233,12 @@ def load_recent_relationship_edges(
         edges=graph.edges,
         events=events,
         snapshot_checksums=tuple(sorted(set(checksums))),
+        country_map_snapshot_checksum=(
+            country_map_snapshot.checksum_sha256 if country_map_snapshot else None
+        ),
+        country_map_retrieved_at=(
+            country_map_snapshot.retrieved_at if country_map_snapshot else None
+        ),
         snapshot_count=len(candidates),
         raw_event_count=raw_event_count,
         resolved_interaction_count=resolved,
