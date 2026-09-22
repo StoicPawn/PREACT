@@ -52,7 +52,7 @@ def test_feature_snapshot_rejects_future_knowledge_in_strict_mode() -> None:
         entity_feature_snapshot(warehouse, entity_id="iso3:AAA", cutoff=CUTOFF)
 
 
-def test_feature_snapshot_allows_future_knowledge_only_in_hindsight_mode() -> None:
+def test_feature_snapshot_allows_future_knowledge_only_in_retrospective_mode() -> None:
     warehouse = StubWarehouse([
         _row(
             valid_from=datetime(2020, 1, 1, tzinfo=UTC),
@@ -64,6 +64,6 @@ def test_feature_snapshot_allows_future_knowledge_only_in_hindsight_mode() -> No
         warehouse,
         entity_id="iso3:AAA",
         cutoff=CUTOFF,
-        knowledge_mode=KnowledgeMode.HINDSIGHT,
+        knowledge_mode=KnowledgeMode.RETROSPECTIVE,
     )
     assert features == {"stress": 0.7}
