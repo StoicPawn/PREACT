@@ -22,7 +22,7 @@ from preact.models.placebo import run_placebo_benchmark
 from preact.models.sliced_evaluation import temporal_slice_metrics
 from preact.models.stress_tests import run_unseen_entity_stress
 from preact.models.experiment_manifest import build_manifest
-from preact.models.reporting import benchmark_diagnostics, temporal_fold_audits, validate_benchmark_suite_fold_audits, validate_prediction_fold_audits
+from preact.models.reporting import attach_prediction_feature_provenance, benchmark_diagnostics, temporal_fold_audits, validate_benchmark_suite_fold_audits, validate_prediction_fold_audits
 from preact.models.research_governance import evaluate_research_promotion
 
 
@@ -121,15 +121,18 @@ def main() -> None:
     manifest=build_manifest(features,dataset.target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None})
     output=Path(args.output_dir)/manifest.dataset_fingerprint[:16]; output.mkdir(parents=True,exist_ok=True)
     fold_audits=temporal_fold_audits(suite.folds)
+    persisted_predictions={}
     for name,b in benchmarks.items():
         try:
             validate_prediction_fold_audits(b.predictions, fold_audits)
-        except ValueError as exc:
+            persisted_predictions[name]=attach_prediction_feature_provenance(b.predictions, dataset.feature_snapshot_fingerprints)
+        except (ValueError, TypeError) as exc:
             raise RuntimeError(f"refusing to persist inconsistent OOS artifact for {name}: {exc}") from exc
-    report={"manifest":manifest.to_dict(),"models":{name:{**benchmark_diagnostics(b),"promotion":asdict(decisions[name])} for name,b in benchmarks.items()},"folds":fold_audits,"ensemble_fold_weights":{str(k):dict(v) for k,v in ensemble.fold_weights.items()},"temporal_stability":stability,"geographic_stress":geographic_stress,"placebo":placebo,"ablations":ablations}
+    lineage={name:{"rows":len(frame),"unique_feature_snapshots":int(frame["feature_snapshot_fingerprint"].nunique())} for name,frame in persisted_predictions.items()}
+    report={"manifest":manifest.to_dict(),"models":{name:{**benchmark_diagnostics(b),"promotion":asdict(decisions[name])} for name,b in benchmarks.items()},"folds":fold_audits,"feature_lineage":lineage,"ensemble_fold_weights":{str(k):dict(v) for k,v in ensemble.fold_weights.items()},"temporal_stability":stability,"geographic_stress":geographic_stress,"placebo":placebo,"ablations":ablations}
     (output/"report.json").write_text(json.dumps(report,indent=2,sort_keys=True,default=str),encoding="utf-8")
-    for name,b in benchmarks.items():
-        if not b.predictions.empty: b.predictions.to_parquet(output/f"predictions_{name}.parquet",index=False)
+    for name,frame in persisted_predictions.items():
+        if not frame.empty: frame.to_parquet(output/f"predictions_{name}.parquet",index=False)
     print(json.dumps({"experiment_dir":str(output),"fingerprint":manifest.dataset_fingerprint,"rows":manifest.rows,"events":manifest.events,"models":{name:{"brier_skill":b.metrics.brier_skill,"skill_ci_lower":b.brier_skill_interval.lower,"promotable":decisions[name].promotable,"reasons":list(decisions[name].reasons)} for name,b in benchmarks.items()},"placebo_max_brier_skill":placebo.get("max_brier_skill") if isinstance(placebo,dict) else None,"geographic_stress_status":geographic_stress.get("status","completed") if isinstance(geographic_stress,dict) else "skipped"},indent=2,default=str))
 
 
