@@ -106,8 +106,7 @@ def main() -> None:
     common = dict(warehouse=history, graph=graph, entity_ids=entities, cutoffs=cutoffs, feature_variables=variables, horizon_days=args.horizon_days, graph_recent_days=max(365,args.horizon_days), knowledge_mode=mode, outcome_observed_through=observed)
     dataset = build_event_risk_panel(target_variable=target_name, include_relation_history=True, include_temporal_dynamics=True, include_target_history=True, **common) if target_kind == "event" else build_relation_risk_panel(target_relation_type=target_name, include_event_history=True, include_temporal_dynamics=True, **common)
     if dataset.features.empty: raise SystemExit("No panel features produced")
-    full_features = dataset.features.dropna(axis=1, how="all")
-    if full_features.shape[1] == 0: raise SystemExit("No usable feature columns produced")
+    raw_features = dataset.features
 
     safe_target_name = "".join(
         ch if ch.isalnum() or ch in ("-", "_") else "_"
@@ -118,7 +117,7 @@ def main() -> None:
         / f"{safe_target_name}_{int(args.horizon_days)}d.json"
     )
     candidate_seal = create_holdout_seal(
-        full_features,
+        raw_features,
         dataset.target,
         target_name=target_name,
         horizon_days=args.horizon_days,
@@ -127,13 +126,18 @@ def main() -> None:
         min_development_dates=args.development_min_dates,
     )
     seal = save_holdout_seal_once(holdout_path, candidate_seal)
-    validate_holdout_commitment(full_features, dataset.target, seal)
+    validate_holdout_commitment(raw_features, dataset.target, seal)
     features, research_target, research_fingerprints = development_view(
-        full_features,
+        raw_features,
         dataset.target,
         dataset.feature_snapshot_fingerprints,
         seal,
     )
+    # Feature discovery itself is development-only: a column appearing for the first
+    # time inside the sealed era must not influence research model/schema selection.
+    features = features.dropna(axis=1, how="all")
+    if features.shape[1] == 0:
+        raise SystemExit("No usable development feature columns produced")
 
     suite = run_benchmark_suite(features, research_target, horizon_days=args.horizon_days, min_train_dates=args.min_train_dates, calibration_dates=args.calibration_dates, test_dates_per_fold=args.test_dates_per_fold, bootstrap_samples=args.bootstrap_samples)
     ensemble = sequential_oos_ensemble({name:model.predictions for name,model in suite.models.items()})
