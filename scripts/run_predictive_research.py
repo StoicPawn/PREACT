@@ -139,6 +139,11 @@ def main() -> None:
         dataset.feature_snapshot_fingerprints,
         seal,
     )
+    # Drop references to the full panel/target immediately after the one-way seal.
+    # Downstream research code receives only the development view.
+    del raw_features
+    del dataset
+
     # Feature discovery itself is development-only: a column appearing for the first
     # time inside the sealed era must not influence research model/schema selection.
     features = features.dropna(axis=1, how="all")
