@@ -17,6 +17,10 @@ from .graph import graph_feature_snapshot
 from .targets import binary_event_target
 from .temporal import entity_feature_snapshot_with_lineage, feature_snapshot_fingerprint
 from .temporal_dynamics import entity_temporal_dynamics_snapshot
+from .world_context import (
+    build_world_context_snapshot,
+    contextual_feature_fingerprint,
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,8 @@ def build_event_risk_panel(
     include_relation_history: bool = True,
     include_temporal_dynamics: bool = True,
     include_target_history: bool = True,
+    include_world_context: bool = True,
+    world_context_windows: Iterable[int] = (90, 365, 1825),
     outcome_observed_through: datetime | None = None,
 ) -> EventPanelDataset:
     """Build a panel for outcomes such as coup attempts or successful coups."""
@@ -53,6 +59,19 @@ def build_event_risk_panel(
     feature_rows: list[dict[str, object]] = []
     target_values: dict[tuple[pd.Timestamp, str], object] = {}
     snapshot_fingerprints: dict[tuple[pd.Timestamp, str], str] = {}
+    world_snapshots = (
+        {
+            cutoff: build_world_context_snapshot(
+                graph,
+                cutoff=cutoff,
+                windows_days=world_context_windows,
+                knowledge_mode=knowledge_mode,
+            )
+            for cutoff in dates
+        }
+        if include_world_context
+        else {}
+    )
 
     for entity_id in entities:
         target = binary_event_target(
@@ -76,7 +95,7 @@ def build_event_risk_panel(
                 knowledge_mode=knowledge_mode,
             )
             row.update(point_features)
-            snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = feature_snapshot_fingerprint(lineage)
+            point_fingerprint = feature_snapshot_fingerprint(lineage)
             if include_temporal_dynamics:
                 row.update(
                     entity_temporal_dynamics_snapshot(
@@ -96,6 +115,17 @@ def build_event_risk_panel(
                     knowledge_mode=knowledge_mode,
                 )
             )
+            if include_world_context:
+                world_snapshot = world_snapshots[cutoff]
+                row.update(world_snapshot.features_for(entity_id))
+                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = (
+                    contextual_feature_fingerprint(
+                        point_fingerprint,
+                        world_snapshot.evidence_fingerprint,
+                    )
+                )
+            else:
+                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = point_fingerprint
             if include_relation_history:
                 row.update(
                     event_history_features(
