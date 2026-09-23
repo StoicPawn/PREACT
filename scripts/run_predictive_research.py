@@ -12,8 +12,10 @@ import pandas as pd
 
 from preact.feature_store.panel import build_relation_risk_panel
 from preact.feature_store.event_panel import build_event_risk_panel
+from preact.history.entity_crosswalk import COWISO3SemanticCrosswalk
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
+from preact.history.snapshot_store import SourceSnapshotStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.models.benchmark_suite import ModelBenchmark, bootstrap_dependence_diagnostic, evaluate_prediction_frame, run_benchmark_suite
 from preact.models.ensemble import sequential_oos_ensemble
@@ -77,6 +79,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--history-db", default="data/history/preact_history.duckdb")
     parser.add_argument("--graph-db", default="data/history/preact_graph.duckdb")
+    parser.add_argument("--shared-hub-root", default="data/shared_hub")
     parser.add_argument("--start", required=True); parser.add_argument("--end", required=True)
     parser.add_argument("--step-days", type=int, default=365); parser.add_argument("--horizon-days", type=int, default=365)
     parser.add_argument("--target-relation", default="militarized_interstate_dispute")
@@ -94,6 +97,9 @@ def main() -> None:
     args = parser.parse_args()
 
     history = HistoricalWarehouse(args.history_db); graph = HistoricalGraphStore(args.graph_db)
+    entity_crosswalk = COWISO3SemanticCrosswalk(
+        SourceSnapshotStore(Path(args.shared_hub_root) / "snapshots")
+    )
     target_name = args.target_event or args.target_relation; target_kind = "event" if args.target_event else "relation"
     entities = tuple(args.entity) if args.entity else tuple(history.list_entities(variable=target_name) if target_kind == "event" else graph.list_entities(relation_type=target_name))
     if not entities: raise SystemExit(f"No entities available for {target_kind} target {target_name}")
@@ -103,7 +109,7 @@ def main() -> None:
     if mode is not KnowledgeMode.STRICT_AS_KNOWN:
         raise SystemExit("predictive research requires --knowledge-mode strict_as_known")
     observed = _dt(args.outcome_observed_through)
-    common = dict(warehouse=history, graph=graph, entity_ids=entities, cutoffs=cutoffs, feature_variables=variables, horizon_days=args.horizon_days, graph_recent_days=max(365,args.horizon_days), knowledge_mode=mode, outcome_observed_through=observed)
+    common = dict(warehouse=history, graph=graph, entity_ids=entities, cutoffs=cutoffs, feature_variables=variables, horizon_days=args.horizon_days, graph_recent_days=max(365,args.horizon_days), knowledge_mode=mode, entity_crosswalk=entity_crosswalk, outcome_observed_through=observed)
     dataset = build_event_risk_panel(target_variable=target_name, include_relation_history=True, include_temporal_dynamics=True, include_target_history=True, **common) if target_kind == "event" else build_relation_risk_panel(target_relation_type=target_name, include_event_history=True, include_temporal_dynamics=True, **common)
     if dataset.features.empty: raise SystemExit("No panel features produced")
     raw_features = dataset.features
@@ -174,7 +180,7 @@ def main() -> None:
             ablation_lineage=_require_suite_feature_lineage(r.benchmark, research_fingerprints, context=f"ablation {family_name}")
             ablations[family_name]={"removed_columns":list(r.removed_columns),"folds":ablation_audits,"feature_lineage":ablation_lineage,"models":_serialize_models(r.benchmark.models)}
     stability={name:[asdict(item) for item in temporal_slice_metrics(b.predictions)] for name,b in benchmarks.items()}
-    manifest=build_manifest(features,research_target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None,"research_phase":"development","sealed_holdout_path":str(holdout_path),"sealed_holdout_fingerprint":seal_fingerprint(seal),"sealed_holdout_start":seal.holdout_start,"sealed_holdout_end":seal.holdout_end})
+    manifest=build_manifest(features,research_target,target_name=target_name,horizon_days=args.horizon_days,knowledge_mode=mode.value,metadata={"history_db":args.history_db,"graph_db":args.graph_db,"step_days":args.step_days,"entities_requested":len(entities),"target_kind":target_kind,"target_name":target_name,"outcome_observed_through":observed.isoformat() if observed else None,"entity_crosswalk_source_snapshot":entity_crosswalk.snapshot.checksum_sha256 if entity_crosswalk.snapshot is not None else None,"research_phase":"development","sealed_holdout_path":str(holdout_path),"sealed_holdout_fingerprint":seal_fingerprint(seal),"sealed_holdout_start":seal.holdout_start,"sealed_holdout_end":seal.holdout_end})
     output=Path(args.output_dir)/manifest.dataset_fingerprint[:16]; output.mkdir(parents=True,exist_ok=True)
     fold_audits=temporal_fold_audits(suite.folds)
     persisted_predictions={}
