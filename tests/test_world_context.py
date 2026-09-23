@@ -209,3 +209,53 @@ def test_world_context_weights_gdelt_conflict_through_neighbor_path(tmp_path):
         features["world_context:system_recent_30d:conflict_pressure"]
         >= features["world_context:neighbor_recent_30d:conflict_pressure"]
     )
+
+
+def test_world_context_propagates_event_pressure_two_hops(tmp_path):
+    graph = HistoricalGraphStore(tmp_path / "graph.duckdb")
+    cutoff = datetime(2020, 2, 1, tzinfo=UTC)
+    graph.insert(
+        [
+            _relation(
+                "a-b",
+                "formal_alliance",
+                "A",
+                "B",
+                datetime(2010, 1, 1, tzinfo=UTC),
+            ),
+            _relation(
+                "b-c",
+                "direct_contiguity",
+                "B",
+                "C",
+                datetime(2010, 1, 1, tzinfo=UTC),
+            ),
+            _relation(
+                "c-d-news",
+                "gdelt_verbal_conflict",
+                "C",
+                "D",
+                datetime(2020, 1, 31, tzinfo=UTC),
+                valid_to=datetime(2020, 2, 1, tzinfo=UTC),
+                attributes={
+                    "goldstein_scale": "-5",
+                    "num_articles": "9",
+                    "quad_class": "3",
+                },
+            ),
+        ]
+    )
+
+    snapshot = build_world_context_snapshot(
+        graph,
+        cutoff=cutoff,
+        windows_days=(30,),
+        max_hops=3,
+    )
+    features = snapshot.features_for("A")
+
+    assert features["world_context:hop1_recent_30d:entities"] == 1.0
+    assert features["world_context:hop1_recent_30d:conflict_pressure"] == 0.0
+    assert features["world_context:hop2_recent_30d:entities"] == 1.0
+    assert features["world_context:hop2_recent_30d:conflict_pressure"] > 0.0
+    assert features["world_context:hop3_recent_30d:entities"] == 0.0
