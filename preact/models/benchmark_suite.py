@@ -201,7 +201,8 @@ def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_da
         random_state,
         horizon_days,
         include_relational=any(
-            str(column).startswith("world_context:") for column in x.columns
+            str(column).startswith(("world_context:", "news_context:"))
+            for column in x.columns
         ),
     )
     predictions: dict[str, list[dict]] = {name: [] for name in builders}
