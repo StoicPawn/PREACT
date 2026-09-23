@@ -181,6 +181,7 @@ class PREACTRelationalHazardMixture(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         frame = self._validate_frame(X).copy()
+        frame.columns = [str(column) for column in frame.columns]
         if self.horizon_days <= 0:
             raise ValueError("horizon_days must be positive")
         if self.gate_validation_dates < 1:
@@ -208,7 +209,8 @@ class PREACTRelationalHazardMixture(BaseEstimator, ClassifierMixin):
         return self
 
     def _aligned(self, X) -> pd.DataFrame:
-        frame = self._validate_frame(X)
+        frame = self._validate_frame(X).copy()
+        frame.columns = [str(column) for column in frame.columns]
         missing = [
             column for column in self.feature_columns_ if column not in frame.columns
         ]
