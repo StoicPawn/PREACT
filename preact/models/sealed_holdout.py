@@ -199,7 +199,7 @@ def validate_holdout_commitment(
     target: pd.Series,
     seal: HoldoutSeal,
 ) -> None:
-    """Fail closed if the sealed tail or feature schema changed after the seal."""
+    """Fail closed if the sealed row identity or hidden outcomes changed after sealing."""
 
     dates = _panel_dates(features)
     mask = dates >= seal.holdout_start_timestamp
