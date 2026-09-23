@@ -21,6 +21,7 @@ class AblationResult:
 DEFAULT_FAMILIES: Mapping[str, tuple[str, ...]] = {
     "graph": ("graph_", "graph:", "history:"),
     "world_context": ("world_context:",),
+    "news_context": ("news_context:",),
     "capabilities": ("cow_nmc:",),
     "macro": (
         "world_bank:",
