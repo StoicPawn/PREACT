@@ -31,13 +31,13 @@ class PREACTRelationalHazardMixture(BaseEstimator, ClassifierMixin):
         self,
         *,
         horizon_days: int,
-        context_prefix: str = "world_context:",
+        context_prefixes: tuple[str, ...] = ("world_context:", "news_context:"),
         gate_validation_dates: int = 5,
         weight_grid_size: int = 21,
         random_state: int = 42,
     ) -> None:
         self.horizon_days = int(horizon_days)
-        self.context_prefix = str(context_prefix)
+        self.context_prefixes = tuple(str(prefix) for prefix in context_prefixes)
         self.gate_validation_dates = int(gate_validation_dates)
         self.weight_grid_size = int(weight_grid_size)
         self.random_state = int(random_state)
@@ -55,7 +55,7 @@ class PREACTRelationalHazardMixture(BaseEstimator, ClassifierMixin):
         local = [
             str(column)
             for column in X.columns
-            if not str(column).startswith(self.context_prefix)
+            if not any(str(column).startswith(prefix) for prefix in self.context_prefixes)
         ]
         return local or [str(column) for column in X.columns]
 
@@ -199,7 +199,7 @@ class PREACTRelationalHazardMixture(BaseEstimator, ClassifierMixin):
         self.context_columns_ = [
             column
             for column in self.feature_columns_
-            if column.startswith(self.context_prefix)
+            if any(column.startswith(prefix) for prefix in self.context_prefixes)
         ]
         self.n_features_in_ = len(self.feature_columns_)
         self.context_feature_count_ = len(self.context_columns_)
