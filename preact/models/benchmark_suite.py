@@ -15,6 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from .hazard import ComplementaryLogLogHazard
+from .relational_hazard import PREACTRelationalHazardMixture
 from .temporal_bootstrap import moving_block_date_samples
 from .temporal_cv import TemporalFold, purged_panel_folds
 
@@ -77,12 +78,13 @@ def _logit(p: np.ndarray) -> np.ndarray:
     return np.log(q / (1.0 - q)).reshape(-1, 1)
 
 
-def _builders(random_state: int) -> dict[str, Callable[[], object]]:
+def _builders(random_state: int, horizon_days: int) -> dict[str, Callable[[], object]]:
     return {
         "logistic_l2": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", LogisticRegression(C=0.5, class_weight="balanced", max_iter=3000, solver="lbfgs", random_state=random_state))]),
         "cloglog_hazard": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", ComplementaryLogLogHazard(l2=1.0, max_iter=1000))]),
         "hist_gradient_boosting": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", HistGradientBoostingClassifier(learning_rate=0.04, max_iter=200, max_leaf_nodes=15, min_samples_leaf=20, l2_regularization=1.0, random_state=random_state))]),
         "extra_trees": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", ExtraTreesClassifier(n_estimators=300, min_samples_leaf=5, max_features="sqrt", class_weight="balanced", n_jobs=-1, random_state=random_state))]),
+        "preact_relational_hazard": lambda: PREACTRelationalHazardMixture(horizon_days=horizon_days, random_state=random_state),
     }
 
 
@@ -185,7 +187,8 @@ def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_da
     x = x.loc[valid]
     y = y.loc[valid].astype(int)
     folds = purged_panel_folds(x.index, horizon_days=horizon_days, min_train_dates=min_train_dates, calibration_dates=calibration_dates, test_dates_per_fold=test_dates_per_fold)
-    predictions: dict[str, list[dict]] = {name: [] for name in _builders(random_state)}
+    builders = _builders(random_state, horizon_days)
+    predictions: dict[str, list[dict]] = {name: [] for name in builders}
     dates_index = x.index.get_level_values("date")
     entity_index = x.index.get_level_values("entity_id")
     for fold in folds:
@@ -207,7 +210,7 @@ def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_da
         global_rate, entity_rates = _hierarchical_rates(history_y, entity_ids=history_entities, shrinkage=entity_shrinkage)
         test_entities = pd.Index(x_test.index.get_level_values("entity_id"))
         baseline = _baseline_for(test_entities, global_rate, entity_rates)
-        for name, builder in _builders(random_state).items():
+        for name, builder in builders.items():
             model = builder()
             model.fit(x_fit, y_fit)
             raw_test = model.predict_proba(x_test)[:, 1]
