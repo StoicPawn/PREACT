@@ -242,4 +242,26 @@ def build_world_context_snapshot(
     )
 
 
-__all__ = ["WorldContextSnapshot", "build_world_context_snapshot"]
+def contextual_feature_fingerprint(
+    point_feature_fingerprint: str,
+    world_context_fingerprint: str,
+) -> str:
+    """Bind entity-local feature vintage to the exact system relation snapshot."""
+
+    for name, value in (
+        ("point_feature_fingerprint", point_feature_fingerprint),
+        ("world_context_fingerprint", world_context_fingerprint),
+    ):
+        if not isinstance(value, str) or len(value) != 64:
+            raise ValueError(f"{name} must be a SHA-256 hex digest")
+    material = (
+        f"point={point_feature_fingerprint}|world={world_context_fingerprint}"
+    ).encode("utf-8")
+    return sha256(material).hexdigest()
+
+
+__all__ = [
+    "WorldContextSnapshot",
+    "build_world_context_snapshot",
+    "contextual_feature_fingerprint",
+]
