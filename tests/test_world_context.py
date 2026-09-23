@@ -20,6 +20,7 @@ def _relation(
     *,
     known_at=None,
     valid_to=None,
+    attributes=None,
 ):
     known = known_at or valid_from
     return HistoricalRelation(
@@ -35,6 +36,7 @@ def _relation(
         source_ref=relation_id,
         retrieved_at=known,
         dataset_version="test-v1",
+        attributes=attributes or {},
     )
 
 
@@ -158,4 +160,52 @@ def test_context_fingerprint_changes_with_world_evidence(tmp_path):
     assert (
         contextual_feature_fingerprint(base, first.evidence_fingerprint)
         != contextual_feature_fingerprint(base, second.evidence_fingerprint)
+    )
+
+
+def test_world_context_weights_gdelt_conflict_through_neighbor_path(tmp_path):
+    graph = HistoricalGraphStore(tmp_path / "graph.duckdb")
+    cutoff = datetime(2020, 1, 10, tzinfo=UTC)
+    graph.insert(
+        [
+            _relation(
+                "ally-a-b",
+                "formal_alliance",
+                "A",
+                "B",
+                datetime(2010, 1, 1, tzinfo=UTC),
+            ),
+            _relation(
+                "gdelt-b-c",
+                "gdelt_material_conflict",
+                "B",
+                "C",
+                datetime(2020, 1, 9, tzinfo=UTC),
+                valid_to=datetime(2020, 1, 10, tzinfo=UTC),
+                attributes={
+                    "goldstein_scale": "-8",
+                    "num_articles": "20",
+                    "quad_class": "4",
+                },
+            ),
+        ]
+    )
+
+    snapshot = build_world_context_snapshot(
+        graph,
+        cutoff=cutoff,
+        windows_days=(30,),
+    )
+    features = snapshot.features_for("A")
+
+    assert features["world_context:neighbor_recent_30d:total"] == 1.0
+    assert (
+        features["world_context:neighbor_recent_30d:conflict_pressure"] > 0.0
+    )
+    assert (
+        features["world_context:neighbor_recent_30d:cooperation_pressure"] == 0.0
+    )
+    assert (
+        features["world_context:system_recent_30d:conflict_pressure"]
+        >= features["world_context:neighbor_recent_30d:conflict_pressure"]
     )
