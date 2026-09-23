@@ -42,21 +42,30 @@ class SharedSnapshotProjector:
         self.graph = graph
         self.fips_to_iso3 = dict(fips_to_iso3 or {})
 
-    def _gdelt_code_map(self, snapshot: SnapshotMetadata) -> dict[str, str]:
-        """Combine current FIPS and snapshotted CAMEO actor-code crosswalks."""
+    def _gdelt_code_map(
+        self,
+        snapshot: SnapshotMetadata,
+    ) -> tuple[dict[str, str], bool]:
+        """Combine FIPS and CAMEO semantic code maps.
+
+        Country-code dictionaries are identifier metadata rather than predictive
+        evidence, so the latest locally snapshotted lookup may normalize older raw
+        events. If no CAMEO lookup is available we keep the relation checkpoint
+        open, allowing those snapshots to be enriched later without refetching.
+        """
 
         mapping = dict(self.fips_to_iso3)
         candidates = [
             item
             for item in self.snapshot_store.iter_metadata(source_id="gdelt")
             if item.source_release == "GDELT CAMEO country lookup"
-            and item.retrieved_at <= snapshot.retrieved_at
         ]
-        if candidates:
-            latest = max(candidates, key=lambda item: item.retrieved_at)
-            cameo = build_cameo_country_map(self.snapshot_store.read_payload(latest))
-            mapping.update(cameo.as_dict())
-        return mapping
+        if not candidates:
+            return mapping, False
+        latest = max(candidates, key=lambda item: item.retrieved_at)
+        cameo = build_cameo_country_map(self.snapshot_store.read_payload(latest))
+        mapping.update(cameo.as_dict())
+        return mapping, True
 
     def project_gdelt_snapshot(self, snapshot: SnapshotMetadata) -> dict[str, int]:
         if snapshot.source_id != "gdelt":
@@ -67,7 +76,7 @@ class SharedSnapshotProjector:
             rows = parse_event_zip(payload)
             inserted_records = 0
             inserted_relations = 0
-            code_map = self._gdelt_code_map(snapshot)
+            code_map, cameo_complete = self._gdelt_code_map(snapshot)
 
             if not self.ledger.seen(GDELT_EVENTS_CONSUMER, snapshot.snapshot_id):
                 records = gdelt_event_records(
@@ -90,7 +99,8 @@ class SharedSnapshotProjector:
                     code_to_iso3=code_map,
                 )
                 inserted_relations = self.graph.insert(relations)
-                self.ledger.mark(GDELT_RELATIONS_CONSUMER, snapshot.snapshot_id)
+                if cameo_complete:
+                    self.ledger.mark(GDELT_RELATIONS_CONSUMER, snapshot.snapshot_id)
 
             return {
                 "records": inserted_records,
