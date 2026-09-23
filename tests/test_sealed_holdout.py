@@ -124,3 +124,37 @@ def test_feature_research_can_evolve_without_resealing_target():
 
     # Adding a candidate feature is allowed; the hidden target boundary remains fixed.
     validate_holdout_commitment(evolved, target, seal)
+
+
+def test_post_holdout_censored_tail_can_mature_without_changing_seal():
+    features, target, _ = _panel()
+    extra_date = pd.Timestamp("2030-01-01")
+    extra_index = pd.MultiIndex.from_product(
+        [[extra_date], ["iso3:AAA", "iso3:BBB"]],
+        names=["date", "entity_id"],
+    )
+    extra_features = pd.DataFrame(
+        {"x": [100, 101], "z": [1.0, 2.0]},
+        index=extra_index,
+    )
+    features = pd.concat([features, extra_features]).sort_index()
+    target = pd.concat(
+        [
+            target,
+            pd.Series([pd.NA, pd.NA], index=extra_index, dtype="Int64"),
+        ]
+    ).sort_index()
+
+    seal = create_holdout_seal(
+        features,
+        target,
+        target_name="event",
+        horizon_days=365,
+    )
+
+    matured = target.copy()
+    matured.loc[extra_index[0]] = 1
+    matured.loc[extra_index[1]] = 0
+
+    assert pd.Timestamp(seal.holdout_end) < extra_date
+    validate_holdout_commitment(features, matured, seal)
