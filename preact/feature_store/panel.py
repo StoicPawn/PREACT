@@ -20,6 +20,7 @@ from .world_context import (
     build_world_context_snapshot,
     contextual_feature_fingerprint,
 )
+from .news_context import build_news_context_snapshot
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,8 @@ def build_relation_risk_panel(
     include_temporal_dynamics: bool = True,
     include_world_context: bool = True,
     world_context_windows: Iterable[int] = (90, 365, 1825),
+    include_news_context: bool = True,
+    news_context_windows: Iterable[int] = (30, 90, 365),
     outcome_observed_through: datetime | None = None,
 ) -> PanelDataset:
     entities=tuple(sorted(set(entity_ids)))
@@ -66,6 +69,19 @@ def build_relation_risk_panel(
             for cutoff in dates
         }
         if include_world_context
+        else {}
+    )
+    news_snapshots = (
+        {
+            cutoff: build_news_context_snapshot(
+                warehouse,
+                cutoff=cutoff,
+                windows_days=news_context_windows,
+                knowledge_mode=knowledge_mode,
+            )
+            for cutoff in dates
+        }
+        if include_news_context
         else {}
     )
 
@@ -104,17 +120,22 @@ def build_relation_risk_panel(
                 recent_days=graph_recent_days,
                 knowledge_mode=knowledge_mode,
             ))
+            context_fingerprint = point_fingerprint
             if include_world_context:
                 world_snapshot = world_snapshots[cutoff]
                 row.update(world_snapshot.features_for(entity_id))
-                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = (
-                    contextual_feature_fingerprint(
-                        point_fingerprint,
-                        world_snapshot.evidence_fingerprint,
-                    )
+                context_fingerprint = contextual_feature_fingerprint(
+                    context_fingerprint,
+                    world_snapshot.evidence_fingerprint,
                 )
-            else:
-                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = point_fingerprint
+            if include_news_context:
+                news_snapshot = news_snapshots[cutoff]
+                row.update(news_snapshot.features_for(entity_id))
+                context_fingerprint = contextual_feature_fingerprint(
+                    context_fingerprint,
+                    news_snapshot.evidence_fingerprint,
+                )
+            snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = context_fingerprint
             if include_event_history:
                 row.update(event_history_features(
                     graph,
