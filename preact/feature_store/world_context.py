@@ -142,12 +142,15 @@ class WorldContextSnapshot:
         for row in active:
             subject = str(row["subject_entity_id"])
             object_ = str(row["object_entity_id"])
+            relation_type = str(row.get("relation_type") or "")
             if subject == entity:
-                neighbors.add(object_)
                 focal_active += 1
+                if not relation_type.startswith("gdelt_"):
+                    neighbors.add(object_)
             elif object_ == entity:
-                neighbors.add(subject)
                 focal_active += 1
+                if not relation_type.startswith("gdelt_"):
+                    neighbors.add(subject)
         neighbors.discard(entity)
 
         features: dict[str, float] = {
