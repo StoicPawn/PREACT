@@ -90,7 +90,6 @@ def test_benchmark_suite_runs_models_on_identical_oos_rows():
         "cloglog_hazard",
         "hist_gradient_boosting",
         "extra_trees",
-        "preact_relational_hazard",
     }
     lengths = {len(model.predictions) for model in result.models.values()}
     assert len(lengths) == 1
