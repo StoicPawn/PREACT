@@ -16,6 +16,10 @@ from .event_history import event_history_features
 from .graph_targets import binary_relation_target
 from .temporal import entity_feature_snapshot_with_lineage, feature_snapshot_fingerprint
 from .temporal_dynamics import entity_temporal_dynamics_snapshot
+from .world_context import (
+    build_world_context_snapshot,
+    contextual_feature_fingerprint,
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,8 @@ def build_relation_risk_panel(
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     include_event_history: bool = True,
     include_temporal_dynamics: bool = True,
+    include_world_context: bool = True,
+    world_context_windows: Iterable[int] = (90, 365, 1825),
     outcome_observed_through: datetime | None = None,
 ) -> PanelDataset:
     entities=tuple(sorted(set(entity_ids)))
@@ -49,6 +55,19 @@ def build_relation_risk_panel(
     feature_rows=[]
     target_values={}
     snapshot_fingerprints={}
+    world_snapshots = (
+        {
+            cutoff: build_world_context_snapshot(
+                graph,
+                cutoff=cutoff,
+                windows_days=world_context_windows,
+                knowledge_mode=knowledge_mode,
+            )
+            for cutoff in dates
+        }
+        if include_world_context
+        else {}
+    )
 
     for entity_id in entities:
         y=binary_relation_target(
@@ -69,7 +88,7 @@ def build_relation_risk_panel(
                 knowledge_mode=knowledge_mode,
             )
             row.update(point_features)
-            snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = feature_snapshot_fingerprint(lineage)
+            point_fingerprint = feature_snapshot_fingerprint(lineage)
             if include_temporal_dynamics:
                 row.update(entity_temporal_dynamics_snapshot(
                     warehouse,
@@ -85,6 +104,17 @@ def build_relation_risk_panel(
                 recent_days=graph_recent_days,
                 knowledge_mode=knowledge_mode,
             ))
+            if include_world_context:
+                world_snapshot = world_snapshots[cutoff]
+                row.update(world_snapshot.features_for(entity_id))
+                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = (
+                    contextual_feature_fingerprint(
+                        point_fingerprint,
+                        world_snapshot.evidence_fingerprint,
+                    )
+                )
+            else:
+                snapshot_fingerprints[(pd.Timestamp(cutoff), entity_id)] = point_fingerprint
             if include_event_history:
                 row.update(event_history_features(
                     graph,
