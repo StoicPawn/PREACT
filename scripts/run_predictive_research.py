@@ -100,6 +100,8 @@ def main() -> None:
     start, end = _dt(args.start), _dt(args.end)
     if end < start: raise SystemExit("--end must be >= --start")
     cutoffs = _cutoffs(start, end, args.step_days); variables = tuple(args.feature) or DEFAULT_FEATURES; mode = KnowledgeMode(args.knowledge_mode)
+    if mode is not KnowledgeMode.STRICT_AS_KNOWN:
+        raise SystemExit("predictive research requires --knowledge-mode strict_as_known")
     observed = _dt(args.outcome_observed_through) if args.outcome_observed_through else None
     common = dict(warehouse=history, graph=graph, entity_ids=entities, cutoffs=cutoffs, feature_variables=variables, horizon_days=args.horizon_days, graph_recent_days=max(365,args.horizon_days), knowledge_mode=mode, outcome_observed_through=observed)
     dataset = build_event_risk_panel(target_variable=target_name, include_relation_history=True, include_temporal_dynamics=True, include_target_history=True, **common) if target_kind == "event" else build_relation_risk_panel(target_relation_type=target_name, include_event_history=True, include_temporal_dynamics=True, **common)
