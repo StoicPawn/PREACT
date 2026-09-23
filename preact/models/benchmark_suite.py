@@ -78,14 +78,24 @@ def _logit(p: np.ndarray) -> np.ndarray:
     return np.log(q / (1.0 - q)).reshape(-1, 1)
 
 
-def _builders(random_state: int, horizon_days: int) -> dict[str, Callable[[], object]]:
-    return {
+def _builders(
+    random_state: int,
+    horizon_days: int,
+    *,
+    include_relational: bool,
+) -> dict[str, Callable[[], object]]:
+    builders: dict[str, Callable[[], object]] = {
         "logistic_l2": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", LogisticRegression(C=0.5, class_weight="balanced", max_iter=3000, solver="lbfgs", random_state=random_state))]),
         "cloglog_hazard": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("scale", StandardScaler()), ("model", ComplementaryLogLogHazard(l2=1.0, max_iter=1000))]),
         "hist_gradient_boosting": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", HistGradientBoostingClassifier(learning_rate=0.04, max_iter=200, max_leaf_nodes=15, min_samples_leaf=20, l2_regularization=1.0, random_state=random_state))]),
         "extra_trees": lambda: Pipeline([("imputer", SimpleImputer(strategy="median", add_indicator=True)), ("model", ExtraTreesClassifier(n_estimators=300, min_samples_leaf=5, max_features="sqrt", class_weight="balanced", n_jobs=-1, random_state=random_state))]),
-        "preact_relational_hazard": lambda: PREACTRelationalHazardMixture(horizon_days=horizon_days, random_state=random_state),
     }
+    if include_relational:
+        builders["preact_relational_hazard"] = lambda: PREACTRelationalHazardMixture(
+            horizon_days=horizon_days,
+            random_state=random_state,
+        )
+    return builders
 
 
 def _hierarchical_rates(y: pd.Series, *, entity_ids: pd.Index, shrinkage: float = 20.0) -> tuple[float, dict[str, float]]:
@@ -187,7 +197,13 @@ def run_benchmark_suite(features: pd.DataFrame, target: pd.Series, *, horizon_da
     x = x.loc[valid]
     y = y.loc[valid].astype(int)
     folds = purged_panel_folds(x.index, horizon_days=horizon_days, min_train_dates=min_train_dates, calibration_dates=calibration_dates, test_dates_per_fold=test_dates_per_fold)
-    builders = _builders(random_state, horizon_days)
+    builders = _builders(
+        random_state,
+        horizon_days,
+        include_relational=any(
+            str(column).startswith("world_context:") for column in x.columns
+        ),
+    )
     predictions: dict[str, list[dict]] = {name: [] for name in builders}
     dates_index = x.index.get_level_values("date")
     entity_index = x.index.get_level_values("entity_id")
