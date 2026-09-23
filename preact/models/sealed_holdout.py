@@ -112,7 +112,8 @@ def create_holdout_seal(
     held_dates = eligible_dates[eligible_dates >= holdout_start]
 
     date_values = pd.to_datetime(features.index.get_level_values("date"))
-    holdout_mask = date_values >= holdout_start
+    holdout_end = pd.Timestamp(held_dates[-1])
+    holdout_mask = (date_values >= holdout_start) & (date_values <= holdout_end)
     sealed_target = aligned.loc[holdout_mask]
 
     if sealed_target.dropna().empty:
@@ -122,7 +123,7 @@ def create_holdout_seal(
         schema_version=SEAL_SCHEMA_VERSION,
         created_at=datetime.now(timezone.utc).isoformat(),
         holdout_start=holdout_start.isoformat(),
-        holdout_end=pd.Timestamp(held_dates[-1]).isoformat(),
+        holdout_end=holdout_end.isoformat(),
         development_end=pd.Timestamp(development_dates[-1]).isoformat(),
         holdout_dates=int(len(held_dates)),
         development_dates=int(len(development_dates)),
@@ -187,7 +188,8 @@ def validate_holdout_commitment(
     """Fail closed if the sealed row identity or hidden outcomes changed after sealing."""
 
     dates = _panel_dates(features)
-    mask = dates >= seal.holdout_start_timestamp
+    holdout_end = pd.Timestamp(seal.holdout_end)
+    mask = (dates >= seal.holdout_start_timestamp) & (dates <= holdout_end)
     held_target = target.reindex(features.index).loc[mask]
 
     if _index_commitment(held_target.index) != seal.sealed_index_commitment:
