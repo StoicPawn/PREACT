@@ -14,9 +14,8 @@ from pathlib import Path
 from typing import Mapping
 
 import pandas as pd
-import pycountry
-
 from preact.history.connectors.cow import COWStateSystemConnector
+from preact.history.entity_crosswalk import country_name_to_iso3
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
 from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
@@ -39,39 +38,6 @@ def _utc(value: datetime | pd.Timestamp | None) -> datetime:
     else:
         stamp = stamp.tz_convert("UTC")
     return stamp.to_pydatetime()
-
-
-def _country_name_to_iso3(name: str) -> str | None:
-    value = str(name or "").strip()
-    if not value:
-        return None
-    aliases = {
-        "UNITED STATES OF AMERICA": "United States",
-        "RUSSIA": "Russian Federation",
-        "IRAN": "Iran, Islamic Republic of",
-        "SYRIA": "Syrian Arab Republic",
-        "BOLIVIA": "Bolivia, Plurinational State of",
-        "VENEZUELA": "Venezuela, Bolivarian Republic of",
-        "TANZANIA": "Tanzania, United Republic of",
-        "VIETNAM": "Viet Nam",
-        "MOLDOVA": "Moldova, Republic of",
-        "SOUTH KOREA": "Korea, Republic of",
-        "NORTH KOREA": "Korea, Democratic People's Republic of",
-        "LAOS": "Lao People's Democratic Republic",
-        "BRUNEI": "Brunei Darussalam",
-        "CZECH REPUBLIC": "Czechia",
-        "SWAZILAND": "Eswatini",
-        "MACEDONIA": "North Macedonia",
-    }
-    candidate = aliases.get(value.upper(), value)
-    try:
-        return pycountry.countries.lookup(candidate).alpha_3
-    except LookupError:
-        try:
-            matches = pycountry.countries.search_fuzzy(candidate)
-        except LookupError:
-            return None
-        return matches[0].alpha_3 if len(matches) == 1 else None
 
 
 def _latest_cow_state_snapshot(
@@ -104,7 +70,7 @@ def _cow_ccode_map(
     for entity in entities:
         if not entity.is_valid_at(valid_at):
             continue
-        iso3 = _country_name_to_iso3(entity.name)
+        iso3 = country_name_to_iso3(entity.name)
         if iso3 is None:
             continue
         for code in entity.codes:
