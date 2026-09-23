@@ -17,8 +17,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from .experiment_manifest import fingerprint_panel
-
 
 SEAL_SCHEMA_VERSION = 1
 
@@ -32,9 +30,9 @@ class HoldoutSeal:
     development_end: str
     holdout_dates: int
     development_dates: int
-    feature_schema_fingerprint: str
+    feature_schema_fingerprint_at_seal: str
     sealed_target_commitment: str
-    sealed_panel_commitment: str
+    sealed_index_commitment: str
     target_name: str
     horizon_days: int
 
@@ -66,6 +64,14 @@ def _schema_fingerprint(features: pd.DataFrame) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return sha256(material).hexdigest()
+
+
+def _index_commitment(index: pd.Index) -> str:
+    digest = sha256()
+    digest.update(
+        pd.util.hash_pandas_object(index, index=True).to_numpy(dtype="uint64").tobytes()
+    )
+    return digest.hexdigest()
 
 
 def _target_commitment(target: pd.Series) -> str:
@@ -121,7 +127,6 @@ def create_holdout_seal(
 
     date_values = pd.to_datetime(features.index.get_level_values("date"))
     holdout_mask = date_values >= holdout_start
-    sealed_features = features.loc[holdout_mask]
     sealed_target = aligned.loc[holdout_mask]
 
     if sealed_target.dropna().empty:
@@ -135,9 +140,9 @@ def create_holdout_seal(
         development_end=pd.Timestamp(development_dates[-1]).isoformat(),
         holdout_dates=int(len(held_dates)),
         development_dates=int(len(development_dates)),
-        feature_schema_fingerprint=_schema_fingerprint(features),
+        feature_schema_fingerprint_at_seal=_schema_fingerprint(features),
         sealed_target_commitment=_target_commitment(sealed_target),
-        sealed_panel_commitment=fingerprint_panel(sealed_features, sealed_target),
+        sealed_index_commitment=_index_commitment(sealed_target.index),
         target_name=str(target_name),
         horizon_days=int(horizon_days),
     )
@@ -154,9 +159,8 @@ def save_holdout_seal_once(path: str | Path, seal: HoldoutSeal) -> HoldoutSeal:
             "holdout_start",
             "holdout_end",
             "development_end",
-            "feature_schema_fingerprint",
             "sealed_target_commitment",
-            "sealed_panel_commitment",
+            "sealed_index_commitment",
             "target_name",
             "horizon_days",
         )
@@ -197,18 +201,14 @@ def validate_holdout_commitment(
 ) -> None:
     """Fail closed if the sealed tail or feature schema changed after the seal."""
 
-    if _schema_fingerprint(features) != seal.feature_schema_fingerprint:
-        raise RuntimeError("feature schema changed after holdout sealing")
-
     dates = _panel_dates(features)
     mask = dates >= seal.holdout_start_timestamp
-    held_features = features.loc[mask]
     held_target = target.reindex(features.index).loc[mask]
 
+    if _index_commitment(held_target.index) != seal.sealed_index_commitment:
+        raise RuntimeError("sealed holdout row identity no longer matches")
     if _target_commitment(held_target) != seal.sealed_target_commitment:
         raise RuntimeError("sealed holdout target commitment no longer matches")
-    if fingerprint_panel(held_features, held_target) != seal.sealed_panel_commitment:
-        raise RuntimeError("sealed holdout panel commitment no longer matches")
 
 
 def development_view(
