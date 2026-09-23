@@ -14,10 +14,11 @@ from datetime import datetime, timedelta
 from hashlib import sha256
 import json
 import math
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import pandas as pd
 
+from preact.history.entity_crosswalk import alias_fingerprint
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
 
@@ -340,6 +341,17 @@ class WorldContextSnapshot:
         return features
 
 
+
+def _canonicalize_relation(
+    row: dict,
+    aliases: Mapping[str, str],
+) -> dict:
+    normalized = dict(row)
+    for field in ("subject_entity_id", "object_entity_id"):
+        value = str(normalized.get(field) or "")
+        normalized[field] = str(aliases.get(value, value))
+    return normalized
+
 def build_world_context_snapshot(
     graph: HistoricalGraphStore,
     *,
@@ -347,6 +359,8 @@ def build_world_context_snapshot(
     windows_days: Iterable[int] = (90, 365, 1825),
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
     max_hops: int = 3,
+    entity_aliases: Mapping[str, str] | None = None,
+    entity_alias_fingerprint: str | None = None,
 ) -> WorldContextSnapshot:
     """Materialize one auditable system snapshot, reusable for every entity."""
 
@@ -356,11 +370,15 @@ def build_world_context_snapshot(
     if int(max_hops) < 1 or int(max_hops) > 5:
         raise ValueError("max_hops must be between 1 and 5")
 
-    active = graph.as_of(
-        cutoff=cutoff,
-        valid_at=cutoff,
-        knowledge_mode=knowledge_mode,
-    )
+    aliases = dict(entity_aliases or {})
+    active = [
+        _canonicalize_relation(row, aliases)
+        for row in graph.as_of(
+            cutoff=cutoff,
+            valid_at=cutoff,
+            knowledge_mode=knowledge_mode,
+        )
+    ]
 
     start = cutoff - timedelta(days=max(windows))
     clauses = ["valid_from > ?", "valid_from <= ?"]
@@ -377,7 +395,10 @@ def build_world_context_snapshot(
             params,
         )
         columns = [item[0] for item in cursor.description]
-        recent = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        recent = [
+            _canonicalize_relation(dict(zip(columns, row)), aliases)
+            for row in cursor.fetchall()
+        ]
 
     evidence: dict[str, dict] = {}
     for row in [*active, *recent]:
@@ -387,12 +408,21 @@ def build_world_context_snapshot(
         )
         evidence[identity] = row
 
+    relation_fingerprint = _fingerprint_rows(evidence.values())
+    mapping_fingerprint = entity_alias_fingerprint or alias_fingerprint(aliases)
+    combined_fingerprint = sha256(
+        (
+            f"relations={relation_fingerprint}|"
+            f"entity_aliases={mapping_fingerprint}"
+        ).encode("utf-8")
+    ).hexdigest()
+
     return WorldContextSnapshot(
         cutoff=cutoff,
         windows_days=windows,
         active_rows=tuple(active),
         recent_rows=tuple(recent),
-        evidence_fingerprint=_fingerprint_rows(evidence.values()),
+        evidence_fingerprint=combined_fingerprint,
         max_hops=int(max_hops),
     )
 
