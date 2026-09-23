@@ -9,6 +9,7 @@ from pathlib import Path
 from preact.data_hub.projection_ledger import ProjectionLedger
 from preact.history.country_codes import load_fips_to_iso3
 from preact.history.document_store import HistoricalDocumentStore
+from preact.history.graph_store import HistoricalGraphStore
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.projections.shared_snapshots import SharedSnapshotProjector
@@ -18,6 +19,7 @@ if __name__ == "__main__":
     hub_root = Path(os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"))
     history_db = os.getenv("PREACT_HISTORY_DB", "data/history/preact_history.duckdb")
     document_db = os.getenv("PREACT_DOCUMENT_DB", "data/history/preact_documents.duckdb")
+    graph_db = os.getenv("PREACT_GRAPH_DB", "data/history/preact_graph.duckdb")
     ledger_db = os.getenv(
         "PREACT_PROJECTION_LEDGER",
         "data/history/projection_ledger.sqlite3",
@@ -31,6 +33,7 @@ if __name__ == "__main__":
         ledger=ProjectionLedger(ledger_db),
         history=HistoricalWarehouse(history_db),
         documents=HistoricalDocumentStore(document_db),
+        graph=HistoricalGraphStore(graph_db),
         fips_to_iso3=load_fips_to_iso3(country_code_map),
     )
     print(json.dumps(projector.project_pending_shared_news(), indent=2))
