@@ -161,3 +161,56 @@ def test_shared_gdelt_event_snapshot_projects_relation_graph_once(tmp_path) -> N
     gdelt = [row for row in rows if row["relation_type"] == "gdelt_material_conflict"]
     assert len(gdelt) == 1
     assert gdelt[0]["object_entity_id"] == "iso3:FRA"
+
+
+def test_gdelt_relation_projection_can_be_enriched_after_cameo_lookup_arrives(tmp_path) -> None:
+    store = SourceSnapshotStore(tmp_path / "hub" / "snapshots")
+    event_snapshot = store.put(
+        source_id="gdelt",
+        payload=_gdelt_event_zip(
+            {
+                "GLOBALEVENTID": "84",
+                "SQLDATE": "20260920",
+                "DATEADDED": "20260920120000",
+                "Actor1CountryCode": "ROM",
+                "Actor2CountryCode": "ITA",
+                "QuadClass": "1",
+                "GoldsteinScale": "4",
+                "NumArticles": "3",
+            }
+        ),
+        retrieved_at=datetime(2026, 9, 20, 12, 5, tzinfo=UTC),
+        source_url="https://example.test/84.zip",
+        operation="realtime_events",
+        content_type="application/zip",
+    )
+    graph = HistoricalGraphStore(tmp_path / "graph.duckdb")
+    projector = SharedSnapshotProjector(
+        snapshot_store=store,
+        ledger=ProjectionLedger(tmp_path / "ledger.sqlite3"),
+        history=HistoricalWarehouse(tmp_path / "history.duckdb"),
+        documents=HistoricalDocumentStore(tmp_path / "documents.duckdb"),
+        graph=graph,
+    )
+
+    before = projector.project_gdelt_snapshot(event_snapshot)
+    assert before["relations"] == 0
+
+    store.put(
+        source_id="gdelt",
+        payload=b"CODE\tLABEL\nROM\tRomania\nITA\tItaly\n",
+        retrieved_at=datetime(2026, 9, 21, tzinfo=UTC),
+        source_url="https://gdeltproject.org/data/lookups/CAMEO.country.txt",
+        source_release="GDELT CAMEO country lookup",
+    )
+
+    after = projector.project_gdelt_snapshot(event_snapshot)
+    assert after["records"] == 0
+    assert after["relations"] == 1
+
+    rows = graph.as_of(
+        cutoff=datetime(2026, 9, 20, 18, tzinfo=UTC),
+        entity_id="iso3:ROU",
+    )
+    assert len(rows) == 1
+    assert rows[0]["object_entity_id"] == "iso3:ITA"
