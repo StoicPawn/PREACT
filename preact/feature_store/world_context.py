@@ -53,6 +53,7 @@ def _canonical_relation(row: dict) -> dict[str, str | None]:
         "dataset_version": (
             None if row.get("dataset_version") is None else str(row["dataset_version"])
         ),
+        "attributes_json": str(row.get("attributes_json") or ""),
     }
 
 
@@ -67,6 +68,55 @@ def _fingerprint_rows(rows: Iterable[dict]) -> str:
     )
     payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _relation_signal(row: dict) -> tuple[float, float, float]:
+    """Return cooperation, conflict and log-volume contributions for a relation row."""
+
+    raw = row.get("attributes_json")
+    if not raw:
+        return 0.0, 0.0, 0.0
+    try:
+        attrs = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return 0.0, 0.0, 0.0
+    if not isinstance(attrs, dict):
+        return 0.0, 0.0, 0.0
+
+    goldstein = pd.to_numeric(attrs.get("goldstein_scale"), errors="coerce")
+    articles = pd.to_numeric(attrs.get("num_articles"), errors="coerce")
+    mentions = pd.to_numeric(attrs.get("num_mentions"), errors="coerce")
+    if pd.isna(articles):
+        articles = mentions
+    volume = math.log1p(max(0.0, 0.0 if pd.isna(articles) else float(articles)))
+    if volume <= 0:
+        volume = math.log(2.0)
+
+    if pd.notna(goldstein):
+        value = float(goldstein)
+        if value > 0:
+            return min(1.0, value / 10.0) * volume, 0.0, volume
+        if value < 0:
+            return 0.0, min(1.0, -value / 10.0) * volume, volume
+
+    quad = str(attrs.get("quad_class") or "").strip()
+    if quad in {"1", "2"}:
+        return 0.25 * volume, 0.0, volume
+    if quad in {"3", "4"}:
+        return 0.0, 0.25 * volume, volume
+    return 0.0, 0.0, volume
+
+
+def _pressure(rows: Iterable[dict]) -> tuple[float, float, float]:
+    cooperation = 0.0
+    conflict = 0.0
+    volume = 0.0
+    for row in rows:
+        coop, conf, row_volume = _relation_signal(row)
+        cooperation += coop
+        conflict += conf
+        volume += row_volume
+    return cooperation, conflict, volume
 
 
 @dataclass(frozen=True)
@@ -144,6 +194,18 @@ class WorldContextSnapshot:
                 len(neighbor_external_rows) / len(rows) if rows else 0.0
             )
 
+            for scope, selected in (
+                ("system", rows),
+                ("focal", focal_rows),
+                ("neighbor", neighbor_external_rows),
+            ):
+                cooperation, conflict, volume = _pressure(selected)
+                prefix = f"world_context:{scope}_recent_{window}d"
+                features[f"{prefix}:cooperation_pressure"] = float(cooperation)
+                features[f"{prefix}:conflict_pressure"] = float(conflict)
+                features[f"{prefix}:net_pressure"] = float(cooperation - conflict)
+                features[f"{prefix}:log_volume"] = float(volume)
+
             neighbor_by_type = Counter(
                 str(row["relation_type"]) for row in neighbor_external_rows
             )
@@ -163,6 +225,10 @@ class WorldContextSnapshot:
             decay = math.log(2.0) / float(half_life)
             global_intensity = 0.0
             neighbor_intensity = 0.0
+            global_conflict = 0.0
+            neighbor_conflict = 0.0
+            global_cooperation = 0.0
+            neighbor_cooperation = 0.0
             for row in recent:
                 age_days = max(
                     0.0,
@@ -173,18 +239,35 @@ class WorldContextSnapshot:
                 )
                 weight = math.exp(-decay * age_days)
                 global_intensity += weight
+                cooperation, conflict, _ = _relation_signal(row)
+                global_cooperation += weight * cooperation
+                global_conflict += weight * conflict
                 endpoints = {
                     str(row["subject_entity_id"]),
                     str(row["object_entity_id"]),
                 }
                 if entity not in endpoints and endpoints.intersection(neighbors):
                     neighbor_intensity += weight
+                    neighbor_cooperation += weight * cooperation
+                    neighbor_conflict += weight * conflict
             features[
                 f"world_context:system_decay_{half_life}d"
             ] = float(global_intensity)
             features[
                 f"world_context:neighbor_decay_{half_life}d"
             ] = float(neighbor_intensity)
+            features[
+                f"world_context:system_decay_{half_life}d:cooperation_pressure"
+            ] = float(global_cooperation)
+            features[
+                f"world_context:system_decay_{half_life}d:conflict_pressure"
+            ] = float(global_conflict)
+            features[
+                f"world_context:neighbor_decay_{half_life}d:cooperation_pressure"
+            ] = float(neighbor_cooperation)
+            features[
+                f"world_context:neighbor_decay_{half_life}d:conflict_pressure"
+            ] = float(neighbor_conflict)
 
         return features
 
