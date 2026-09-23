@@ -83,7 +83,7 @@ class SharedSnapshotProjector:
         if snapshot.operation == "doc_artlist":
             consumer = GDELT_DOCUMENTS_CONSUMER
             if self.ledger.seen(consumer, snapshot.snapshot_id):
-                return {"records": 0, "documents": 0}
+                return {"records": 0, "documents": 0, "relations": 0}
             payload = json.loads(
                 self.snapshot_store.read_payload(snapshot).decode("utf-8")
             )
@@ -95,20 +95,20 @@ class SharedSnapshotProjector:
             )
             inserted = self.documents.insert(documents)
             self.ledger.mark(consumer, snapshot.snapshot_id)
-            return {"records": 0, "documents": inserted}
+            return {"records": 0, "documents": inserted, "relations": 0}
 
-        return {"records": 0, "documents": 0}
+        return {"records": 0, "documents": 0, "relations": 0}
 
     def project_google_news_snapshot(
         self,
         snapshot: SnapshotMetadata,
     ) -> dict[str, int]:
         if snapshot.source_id != "google_news_rss" or snapshot.operation != "rss_search":
-            return {"records": 0, "documents": 0}
+            return {"records": 0, "documents": 0, "relations": 0}
 
         consumer = GOOGLE_NEWS_DOCUMENTS_CONSUMER
         if self.ledger.seen(consumer, snapshot.snapshot_id):
-            return {"records": 0, "documents": 0}
+            return {"records": 0, "documents": 0, "relations": 0}
 
         xml = self.snapshot_store.read_payload(snapshot).decode(
             "utf-8",
@@ -131,7 +131,7 @@ class SharedSnapshotProjector:
         )
         inserted = self.documents.insert(documents)
         self.ledger.mark(consumer, snapshot.snapshot_id)
-        return {"records": 0, "documents": inserted}
+        return {"records": 0, "documents": inserted, "relations": 0}
 
     def project_pending_gdelt(self) -> dict[str, int]:
         totals = {"snapshots": 0, "records": 0, "documents": 0, "relations": 0}
@@ -147,7 +147,7 @@ class SharedSnapshotProjector:
 
 
     def project_pending_shared_news(self) -> dict[str, int]:
-        totals = {"snapshots": 0, "records": 0, "documents": 0}
+        totals = {"snapshots": 0, "records": 0, "documents": 0, "relations": 0}
         for source_id in ("gdelt", "google_news_rss"):
             for snapshot in self.snapshot_store.iter_metadata(source_id=source_id):
                 if source_id == "gdelt":
@@ -161,4 +161,5 @@ class SharedSnapshotProjector:
                 totals["snapshots"] += 1
                 totals["records"] += result["records"]
                 totals["documents"] += result["documents"]
+                totals["relations"] += result.get("relations", 0)
         return totals
