@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 
 
-SEAL_SCHEMA_VERSION = 1
+SEAL_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,6 @@ class HoldoutSeal:
     development_end: str
     holdout_dates: int
     development_dates: int
-    feature_schema_fingerprint_at_seal: str
     sealed_target_commitment: str
     sealed_index_commitment: str
     target_name: str
@@ -51,19 +50,6 @@ def _panel_dates(features: pd.DataFrame) -> pd.DatetimeIndex:
     if dates.isna().any():
         raise ValueError("panel dates must not contain missing values")
     return pd.DatetimeIndex(dates)
-
-
-def _schema_fingerprint(features: pd.DataFrame) -> str:
-    material = json.dumps(
-        {
-            "columns": [str(column) for column in features.columns],
-            "dtypes": [str(dtype) for dtype in features.dtypes],
-            "index_names": list(features.index.names),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return sha256(material).hexdigest()
 
 
 def _index_commitment(index: pd.Index) -> str:
@@ -140,7 +126,6 @@ def create_holdout_seal(
         development_end=pd.Timestamp(development_dates[-1]).isoformat(),
         holdout_dates=int(len(held_dates)),
         development_dates=int(len(development_dates)),
-        feature_schema_fingerprint_at_seal=_schema_fingerprint(features),
         sealed_target_commitment=_target_commitment(sealed_target),
         sealed_index_commitment=_index_commitment(sealed_target.index),
         target_name=str(target_name),
