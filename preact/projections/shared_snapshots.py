@@ -9,6 +9,7 @@ from typing import Mapping
 from preact.data_hub.gdelt_realtime import parse_event_zip
 from preact.data_hub.google_news import parse_google_news_rss
 from preact.data_hub.projection_ledger import ProjectionLedger
+from preact.history.connectors.gdelt_cameo import build_cameo_country_map
 from preact.history.document_store import HistoricalDocumentStore
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
@@ -41,6 +42,22 @@ class SharedSnapshotProjector:
         self.graph = graph
         self.fips_to_iso3 = dict(fips_to_iso3 or {})
 
+    def _gdelt_code_map(self, snapshot: SnapshotMetadata) -> dict[str, str]:
+        """Combine current FIPS and snapshotted CAMEO actor-code crosswalks."""
+
+        mapping = dict(self.fips_to_iso3)
+        candidates = [
+            item
+            for item in self.snapshot_store.iter_metadata(source_id="gdelt")
+            if item.source_release == "GDELT CAMEO country lookup"
+            and item.retrieved_at <= snapshot.retrieved_at
+        ]
+        if candidates:
+            latest = max(candidates, key=lambda item: item.retrieved_at)
+            cameo = build_cameo_country_map(self.snapshot_store.read_payload(latest))
+            mapping.update(cameo.as_dict())
+        return mapping
+
     def project_gdelt_snapshot(self, snapshot: SnapshotMetadata) -> dict[str, int]:
         if snapshot.source_id != "gdelt":
             return {"records": 0, "documents": 0, "relations": 0}
@@ -50,13 +67,14 @@ class SharedSnapshotProjector:
             rows = parse_event_zip(payload)
             inserted_records = 0
             inserted_relations = 0
+            code_map = self._gdelt_code_map(snapshot)
 
             if not self.ledger.seen(GDELT_EVENTS_CONSUMER, snapshot.snapshot_id):
                 records = gdelt_event_records(
                     rows,
                     acquired_at=snapshot.retrieved_at,
                     snapshot_checksum=snapshot.checksum_sha256,
-                    fips_to_iso3=self.fips_to_iso3,
+                    fips_to_iso3=code_map,
                 )
                 inserted_records = self.history.insert_records(records)
                 self.ledger.mark(GDELT_EVENTS_CONSUMER, snapshot.snapshot_id)
@@ -69,7 +87,7 @@ class SharedSnapshotProjector:
                     rows,
                     acquired_at=snapshot.retrieved_at,
                     snapshot_checksum=snapshot.checksum_sha256,
-                    code_to_iso3=self.fips_to_iso3,
+                    code_to_iso3=code_map,
                 )
                 inserted_relations = self.graph.insert(relations)
                 self.ledger.mark(GDELT_RELATIONS_CONSUMER, snapshot.snapshot_id)
