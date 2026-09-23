@@ -85,7 +85,7 @@ def main() -> None:
     parser.add_argument("--entity", action="append", default=[]); parser.add_argument("--feature", action="append", default=[])
     parser.add_argument("--min-train-dates", type=int, default=20); parser.add_argument("--calibration-dates", type=int, default=5); parser.add_argument("--test-dates-per-fold", type=int, default=5)
     parser.add_argument("--bootstrap-samples", type=int, default=1000); parser.add_argument("--output-dir", default="data/experiments/predictive")
-    parser.add_argument("--outcome-observed-through", default=None)
+    parser.add_argument("--outcome-observed-through", required=True)
     parser.add_argument("--sealed-holdout-dir", default="data/experiments/holdouts")
     parser.add_argument("--holdout-fraction", type=float, default=0.20)
     parser.add_argument("--holdout-min-dates", type=int, default=5)
@@ -102,7 +102,7 @@ def main() -> None:
     cutoffs = _cutoffs(start, end, args.step_days); variables = tuple(args.feature) or DEFAULT_FEATURES; mode = KnowledgeMode(args.knowledge_mode)
     if mode is not KnowledgeMode.STRICT_AS_KNOWN:
         raise SystemExit("predictive research requires --knowledge-mode strict_as_known")
-    observed = _dt(args.outcome_observed_through) if args.outcome_observed_through else None
+    observed = _dt(args.outcome_observed_through)
     common = dict(warehouse=history, graph=graph, entity_ids=entities, cutoffs=cutoffs, feature_variables=variables, horizon_days=args.horizon_days, graph_recent_days=max(365,args.horizon_days), knowledge_mode=mode, outcome_observed_through=observed)
     dataset = build_event_risk_panel(target_variable=target_name, include_relation_history=True, include_temporal_dynamics=True, include_target_history=True, **common) if target_kind == "event" else build_relation_risk_panel(target_relation_type=target_name, include_event_history=True, include_temporal_dynamics=True, **common)
     if dataset.features.empty: raise SystemExit("No panel features produced")
