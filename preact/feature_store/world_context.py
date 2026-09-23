@@ -8,7 +8,7 @@ relation graph into system, first-hop and second-hop pressure features at each c
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -126,6 +126,7 @@ class WorldContextSnapshot:
     active_rows: tuple[dict, ...]
     recent_rows: tuple[dict, ...]
     evidence_fingerprint: str
+    max_hops: int = 3
 
     def features_for(self, entity_id: str) -> dict[str, float]:
         """Encode global, direct-neighbour and second-hop relation pressure."""
@@ -154,6 +155,21 @@ class WorldContextSnapshot:
             "world_context:focal_active_relations": float(focal_active),
             "world_context:focal_active_neighbors": float(len(neighbors)),
         }
+
+        # Stable/relation-state edges define the channels through which external
+        # event pressure can propagate. One-day GDELT event edges are excluded
+        # from this adjacency so the same news event cannot create its own path.
+        adjacency: dict[str, set[str]] = defaultdict(set)
+        for relation in active:
+            relation_type = str(relation.get("relation_type") or "")
+            if relation_type.startswith("gdelt_"):
+                continue
+            subject = str(relation.get("subject_entity_id") or "")
+            object_ = str(relation.get("object_entity_id") or "")
+            if not subject or not object_ or subject == object_:
+                continue
+            adjacency[subject].add(object_)
+            adjacency[object_].add(subject)
         for relation_type, count in active_types.items():
             features[f"world_context:system_active:{relation_type}"] = float(count)
 
@@ -205,6 +221,58 @@ class WorldContextSnapshot:
                 features[f"{prefix}:conflict_pressure"] = float(conflict)
                 features[f"{prefix}:net_pressure"] = float(cooperation - conflict)
                 features[f"{prefix}:log_volume"] = float(volume)
+
+            # Multi-hop message passing. Recent GDELT interaction pressure is first
+            # attached to its endpoint countries, then aggregated by exact graph
+            # distance from the focal entity over the structural relation graph.
+            node_pressure: dict[str, list[float]] = defaultdict(
+                lambda: [0.0, 0.0, 0.0]
+            )
+            for relation in rows:
+                if not str(relation.get("relation_type") or "").startswith("gdelt_"):
+                    continue
+                cooperation, conflict, volume = _relation_signal(relation)
+                for endpoint in (
+                    str(relation.get("subject_entity_id") or ""),
+                    str(relation.get("object_entity_id") or ""),
+                ):
+                    if not endpoint:
+                        continue
+                    node_pressure[endpoint][0] += cooperation
+                    node_pressure[endpoint][1] += conflict
+                    node_pressure[endpoint][2] += volume
+
+            visited = {entity}
+            frontier = {entity}
+            for hop in range(1, max(1, int(self.max_hops)) + 1):
+                next_frontier: set[str] = set()
+                for node in frontier:
+                    next_frontier.update(adjacency.get(node, set()))
+                next_frontier.difference_update(visited)
+                visited.update(next_frontier)
+                prefix = f"world_context:hop{hop}_recent_{window}d"
+                features[f"{prefix}:entities"] = float(len(next_frontier))
+                features[f"{prefix}:cooperation_pressure"] = float(
+                    sum(node_pressure[node][0] for node in next_frontier)
+                )
+                features[f"{prefix}:conflict_pressure"] = float(
+                    sum(node_pressure[node][1] for node in next_frontier)
+                )
+                features[f"{prefix}:log_volume"] = float(
+                    sum(node_pressure[node][2] for node in next_frontier)
+                )
+                frontier = next_frontier
+                if not frontier:
+                    # Preserve a stable feature schema up to max_hops.
+                    for remaining in range(hop + 1, max(1, int(self.max_hops)) + 1):
+                        remaining_prefix = (
+                            f"world_context:hop{remaining}_recent_{window}d"
+                        )
+                        features[f"{remaining_prefix}:entities"] = 0.0
+                        features[f"{remaining_prefix}:cooperation_pressure"] = 0.0
+                        features[f"{remaining_prefix}:conflict_pressure"] = 0.0
+                        features[f"{remaining_prefix}:log_volume"] = 0.0
+                    break
 
             neighbor_by_type = Counter(
                 str(row["relation_type"]) for row in neighbor_external_rows
@@ -278,12 +346,15 @@ def build_world_context_snapshot(
     cutoff: datetime,
     windows_days: Iterable[int] = (90, 365, 1825),
     knowledge_mode: KnowledgeMode = KnowledgeMode.STRICT_AS_KNOWN,
+    max_hops: int = 3,
 ) -> WorldContextSnapshot:
     """Materialize one auditable system snapshot, reusable for every entity."""
 
     windows = tuple(sorted({max(1, int(days)) for days in windows_days}))
     if not windows:
         raise ValueError("windows_days must contain at least one positive window")
+    if int(max_hops) < 1 or int(max_hops) > 5:
+        raise ValueError("max_hops must be between 1 and 5")
 
     active = graph.as_of(
         cutoff=cutoff,
@@ -322,6 +393,7 @@ def build_world_context_snapshot(
         active_rows=tuple(active),
         recent_rows=tuple(recent),
         evidence_fingerprint=_fingerprint_rows(evidence.values()),
+        max_hops=int(max_hops),
     )
 
 
