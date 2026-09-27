@@ -21,6 +21,7 @@ from preact.data_ingestion.orchestrator import IngestionArtifacts
 from preact.data_ingestion.sources import GDELTSource, IngestionResult
 from preact.history.world_knowledge_store import WorldKnowledgeStore
 from preact.intelligence.knowledge_update import AutonomousKnowledgeUpdater
+from preact.intelligence.world_events import WorldEventObservation
 from preact.intelligence.world_knowledge import (
     KnowledgeDomain,
     KnowledgeUpdateCandidate,
@@ -238,3 +239,76 @@ def test_world_country_knowledge_endpoint_is_point_in_time(tmp_path) -> None:
     assert status.status_code == 200
     assert status.json()["current_assertions"] == 1
     assert status.json()["queued_narrative_jobs"] >= 1
+
+
+def test_world_country_events_endpoint_is_point_in_time(tmp_path) -> None:
+    orchestrator = DummyOrchestrator()
+    repository = SimulationRepository(
+        tmp_path / "sim-events.duckdb",
+        export_dir=tmp_path / "exports-events",
+    )
+    service = SimulationService(repository=repository)
+    store = WorldKnowledgeStore(tmp_path / "world-events-api.duckdb")
+
+    first_known = datetime.fromisoformat("2026-09-27T09:00:00+00:00")
+    revised_known = datetime.fromisoformat("2026-09-27T10:00:00+00:00")
+    event_time = datetime.fromisoformat("2026-09-27T08:00:00+00:00")
+
+    store.record_world_events(
+        [
+            WorldEventObservation(
+                provider="gdelt",
+                provider_event_id="event-1",
+                event_time=event_time,
+                known_at=first_known,
+                actor1_entity_id="country:ITA",
+                actor2_entity_id="country:FRA",
+                event_code="040",
+                num_articles=2,
+                snapshot_checksum="v1",
+            ),
+            WorldEventObservation(
+                provider="gdelt",
+                provider_event_id="event-1",
+                event_time=event_time,
+                known_at=revised_known,
+                actor1_entity_id="country:ITA",
+                actor2_entity_id="country:FRA",
+                event_code="040",
+                num_articles=7,
+                snapshot_checksum="v2",
+            ),
+        ]
+    )
+
+    app = create_app(
+        orchestrator=orchestrator,
+        simulation_service=service,
+        world_knowledge_store=store,
+    )
+    client = TestClient(app)
+
+    early = client.get(
+        "/world/countries/ITA/events",
+        params={
+            "as_of": "2026-09-27T09:30:00+00:00",
+            "known_cutoff": "2026-09-27T09:30:00+00:00",
+        },
+    )
+    assert early.status_code == 200
+    early_payload = early.json()
+    assert early_payload["events"][0]["num_articles"] == 2
+    assert (
+        early_payload["event_semantics"]
+        == "provider_derived_observations_not_promoted_country_facts"
+    )
+
+    later = client.get(
+        "/world/countries/ITA/events",
+        params={
+            "as_of": "2026-09-27T10:30:00+00:00",
+            "known_cutoff": "2026-09-27T10:30:00+00:00",
+        },
+    )
+    assert later.status_code == 200
+    assert later.json()["events"][0]["num_articles"] == 7
