@@ -1,7 +1,7 @@
 """FastAPI application exposing PREACT backend services."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -303,6 +303,43 @@ def create_app(
                 "interpretations_are_separate": True,
                 "forecasts_do_not_mutate_facts": True,
             },
+        }
+
+    @app.get("/world/countries/{iso3}/events")
+    def world_country_events(
+        iso3: str,
+        as_of: datetime | None = Query(None, description="World-state event cutoff"),
+        known_cutoff: datetime | None = Query(
+            None,
+            description="Knowledge-time cutoff used to prevent hindsight leakage",
+        ),
+        limit: int = Query(100, ge=1, le=500),
+    ) -> Dict[str, Any]:
+        store = app.state.world_knowledge_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="World Knowledge store is not configured")
+
+        country = str(iso3).strip().upper()
+        if len(country) != 3 or not country.isalpha():
+            raise HTTPException(status_code=400, detail="iso3 must be a three-letter country code")
+
+        as_of_dt = _coerce_query_datetime(as_of, "as_of") or datetime.now(timezone.utc)
+        known_cutoff_dt = (
+            _coerce_query_datetime(known_cutoff, "known_cutoff") or as_of_dt
+        )
+        events = store.event_timeline(
+            f"country:{country}",
+            as_of=as_of_dt,
+            known_cutoff=known_cutoff_dt,
+            limit=int(limit),
+        )
+        return {
+            "entity_id": f"country:{country}",
+            "iso3": country,
+            "as_of": as_of_dt.isoformat(),
+            "known_cutoff": known_cutoff_dt.isoformat(),
+            "events": events,
+            "event_semantics": "provider_derived_observations_not_promoted_country_facts",
         }
 
     service = simulation_service
