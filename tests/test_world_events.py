@@ -8,6 +8,7 @@ import pandas as pd
 
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.history.world_knowledge_store import WorldKnowledgeStore
+from preact.intelligence.gdelt_ingest import _GKG_COLUMNS, _MENTION_COLUMNS
 from preact.intelligence.world_cycle import run_world_intelligence_cycle
 from preact.intelligence.world_events import WorldEventObservation, project_gdelt_events
 
@@ -191,3 +192,170 @@ def test_world_cycle_consumes_shared_snapshots_without_provider_fetch(tmp_path):
         as_of=utc(10),
     )
     assert second.inserted_event_observations == 0
+
+
+def test_event_timeline_joins_latest_mentions_evidence(tmp_path):
+    store = WorldKnowledgeStore(tmp_path / "mentions.duckdb")
+    event = WorldEventObservation(
+        provider="gdelt",
+        provider_event_id="123",
+        event_time=utc(8),
+        known_at=utc(9),
+        actor1_entity_id="country:ITA",
+        actor2_entity_id="country:FRA",
+        event_code="040",
+        source_url="https://example.test/event",
+        snapshot_checksum="event-snapshot",
+    )
+    store.record_world_events([event])
+    store.record_gdelt_context(
+        mention_observations=[
+            {
+                "provider_event_id": "123",
+                "known_at": utc(10),
+                "mention_count": 4,
+                "distinct_source_count": 2,
+                "mention_sources": ["a.example", "b.example"],
+                "mean_confidence": 82.5,
+                "max_confidence": 90.0,
+                "mean_document_tone": -0.2,
+                "latest_mention_time": "20260927100000",
+                "snapshot_checksum": "mentions-snapshot",
+            }
+        ],
+        gkg_documents=[],
+        processed_snapshots=[
+            {
+                "snapshot_checksum": "mentions-snapshot",
+                "operation": "realtime_mentions",
+                "retrieved_at": utc(10),
+            }
+        ],
+    )
+
+    before = store.event_timeline(
+        "country:ITA",
+        as_of=utc(9, 30),
+        known_cutoff=utc(9, 30),
+    )
+    assert before[0]["mention_source_count"] is None
+    assert before[0]["mention_sources"] == []
+
+    after = store.event_timeline(
+        "country:ITA",
+        as_of=utc(10, 30),
+        known_cutoff=utc(10, 30),
+    )
+    assert after[0]["corroborating_mentions"] == 4
+    assert after[0]["mention_source_count"] == 2
+    assert after[0]["mention_max_confidence"] == 90.0
+    assert after[0]["mention_sources"] == ["a.example", "b.example"]
+
+
+def _mentions_zip() -> bytes:
+    values = [""] * len(_MENTION_COLUMNS)
+    values[0] = "999"
+    values[2] = "20260927093000"
+    values[4] = "wire.example"
+    values[5] = "https://wire.example/story"
+    values[11] = "88"
+    values[13] = "-0.4"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("mentions.csv", "\t".join(values) + "\n")
+    return buffer.getvalue()
+
+
+def _gkg_zip() -> bytes:
+    values = [""] * len(_GKG_COLUMNS)
+    values[0] = "20260927093000-0"
+    values[1] = "20260927093000"
+    values[3] = "wire.example"
+    values[4] = "https://wire.example/context"
+    values[7] = "DIPLOMACY;SANCTIONS;"
+    values[10] = "1#Italy#ITA#ITA##42#12#ITA#1;1#France#FRA#FRA##46#2#FRA#2"
+    values[11] = "Person A"
+    values[13] = "European Union"
+    values[15] = "-0.6,0,0,0,0,0,100"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("gkg.csv", "\t".join(values) + "\n")
+    return buffer.getvalue()
+
+
+def test_world_cycle_persists_mentions_and_gkg_context(tmp_path):
+    hub_root = tmp_path / "shared-context"
+    snapshots = SourceSnapshotStore(hub_root / "snapshots")
+    snapshots.put(
+        source_id="gdelt",
+        payload=b"CODE\tLABEL\nITA\tItaly\nFRA\tFrance\n",
+        retrieved_at=utc(8),
+        source_url="https://example.test/CAMEO.country.txt",
+        source_release="GDELT CAMEO country lookup",
+        operation="reference_cameo_country",
+    )
+    snapshots.put(
+        source_id="gdelt",
+        payload=_event_zip(),
+        retrieved_at=utc(9, 15),
+        source_url="https://example.test/events.zip",
+        source_release="events.zip",
+        operation="realtime_events",
+    )
+    snapshots.put(
+        source_id="gdelt",
+        payload=_mentions_zip(),
+        retrieved_at=utc(9, 30),
+        source_url="https://example.test/mentions.zip",
+        source_release="mentions.zip",
+        operation="realtime_mentions",
+    )
+    snapshots.put(
+        source_id="gdelt",
+        payload=_gkg_zip(),
+        retrieved_at=utc(9, 30),
+        source_url="https://example.test/gkg.zip",
+        source_release="gkg.zip",
+        operation="realtime_gkg",
+    )
+
+    world_db = tmp_path / "world-context.duckdb"
+    result = run_world_intelligence_cycle(
+        shared_hub_root=hub_root,
+        world_knowledge_db=world_db,
+        lookback_days=1,
+        as_of=utc(10),
+    )
+    assert result.inserted_event_observations == 1
+    assert result.mention_snapshot_count == 1
+    assert result.gkg_snapshot_count == 1
+    assert result.inserted_mention_observations == 1
+    assert result.inserted_gkg_documents == 1
+
+    store = WorldKnowledgeStore(world_db)
+    timeline = store.event_timeline(
+        "country:ITA",
+        as_of=utc(10),
+        known_cutoff=utc(10),
+    )
+    assert timeline[0]["mention_source_count"] == 1
+    assert timeline[0]["mention_max_confidence"] == 88.0
+
+    context = store.gkg_context_for_country(
+        "country:ITA",
+        as_of=utc(10),
+        known_cutoff=utc(10),
+    )
+    assert len(context) == 1
+    assert "DIPLOMACY" in context[0]["themes"]
+
+    second = run_world_intelligence_cycle(
+        shared_hub_root=hub_root,
+        world_knowledge_db=world_db,
+        lookback_days=1,
+        as_of=utc(10),
+    )
+    assert second.mention_snapshot_count == 0
+    assert second.gkg_snapshot_count == 0
+    assert second.inserted_mention_observations == 0
+    assert second.inserted_gkg_documents == 0

@@ -427,6 +427,12 @@ def assemble_country_intelligence_profile(
         known_cutoff=cutoff,
         limit=max(1, min(int(event_limit), 500)),
     )
+    gdelt_context = world.gkg_context_for_country(
+        entity_id,
+        as_of=world_time,
+        known_cutoff=cutoff,
+        limit=max(1, min(int(news_limit), 200)),
+    )
 
     political = _section(state, POLITICAL_SYSTEM_FIELDS)
     government = _section(state, CURRENT_GOVERNMENT_FIELDS)
@@ -487,6 +493,10 @@ def assemble_country_intelligence_profile(
             "semantic_class": "PROVIDER_DERIVED_OBSERVATION",
             "events": events,
         },
+        "gdelt_context": {
+            "semantic_class": "PROVIDER_DERIVED_CONTEXT",
+            "documents": gdelt_context,
+        },
         "recent_news": _recent_news(
             news,
             country_name=identity["name"],
@@ -498,6 +508,7 @@ def assemble_country_intelligence_profile(
             "facts_are_sourced": True,
             "unknown_fields_remain_unknown": True,
             "provider_events_are_not_promoted_facts": True,
+            "gdelt_context_is_not_promoted_fact": True,
             "news_name_match_is_not_entity_resolution": True,
             "interpretations_are_separate": True,
             "forecasts_are_separate": True,

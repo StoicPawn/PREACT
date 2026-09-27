@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh PREACT live geopolitical pulse every 15 minutes
+
+[Timer]
+OnCalendar=*:04/15
+Persistent=true
+RandomizedDelaySec=20
+Unit=preact-geopolitical-live.service
+
+[Install]
+WantedBy=timers.target

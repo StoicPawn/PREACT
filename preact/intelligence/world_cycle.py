@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from preact.history.world_knowledge_store import WorldKnowledgeStore
+from preact.intelligence.gdelt_context import load_recent_gdelt_context
 from preact.intelligence.gdelt_relationships import load_recent_relationship_edges
 from preact.intelligence.world_events import project_gdelt_events
 
@@ -25,6 +26,12 @@ class WorldIntelligenceCycleResult:
     resolved_interaction_count: int
     projected_event_observations: int
     inserted_event_observations: int
+    mention_snapshot_count: int
+    gkg_snapshot_count: int
+    mention_raw_rows: int
+    gkg_raw_rows: int
+    inserted_mention_observations: int
+    inserted_gkg_documents: int
     newest_shared_retrieval: datetime | None
     country_map_snapshot_checksum: str | None
 
@@ -64,6 +71,19 @@ def run_world_intelligence_cycle(
     store = WorldKnowledgeStore(world_knowledge_db)
     inserted = store.record_world_events(observations)
 
+    processed_context = store.processed_gdelt_context_snapshots()
+    context = load_recent_gdelt_context(
+        shared_hub_root,
+        as_of=cutoff,
+        lookback_days=max(int(lookback_days), 7),
+        skip_snapshot_checksums=processed_context,
+    )
+    context_result = store.record_gdelt_context(
+        mention_observations=context.mention_observations,
+        gkg_documents=context.gkg_documents,
+        processed_snapshots=context.processed_snapshots,
+    )
+
     if batch.snapshot_count == 0:
         status = "no_shared_snapshots"
     elif batch.country_map_snapshot_checksum is None:
@@ -80,6 +100,12 @@ def run_world_intelligence_cycle(
         resolved_interaction_count=batch.resolved_interaction_count,
         projected_event_observations=len(observations),
         inserted_event_observations=inserted,
+        mention_snapshot_count=context.mention_snapshot_count,
+        gkg_snapshot_count=context.gkg_snapshot_count,
+        mention_raw_rows=context.mention_raw_rows,
+        gkg_raw_rows=context.gkg_raw_rows,
+        inserted_mention_observations=context_result["inserted_mentions"],
+        inserted_gkg_documents=context_result["inserted_gkg_documents"],
         newest_shared_retrieval=batch.newest_retrieved_at,
         country_map_snapshot_checksum=batch.country_map_snapshot_checksum,
     )

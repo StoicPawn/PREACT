@@ -25,6 +25,7 @@ from preact.analytics.relationship_signals import (
 from preact.data_hub.gateway import SharedProviderGateway
 from preact.data_hub.news_store import SharedNewsStore
 from preact.history.warehouse import HistoricalWarehouse
+from preact.history.geopolitical_state_store import GeopoliticalStateStore
 from preact.history.world_knowledge_store import WorldKnowledgeStore
 from preact.intelligence.country_intelligence import assemble_country_intelligence_profile
 from preact.intelligence.country_profile import IndicatorSnapshot, fetch_current_country_profile
@@ -108,6 +109,90 @@ _STATUS_COLOR = {
     "no_evidence": "#ECEFF1",
 }
 
+
+
+def _geopolitical_state_layers(
+    focal_iso3: str,
+    *,
+    as_of: datetime,
+) -> tuple[dict[str, RelationshipSignal], list[dict[str, object]]]:
+    """Read persisted canonical/live states without taking a DuckDB write lock."""
+
+    db_path = Path(
+        os.getenv(
+            "PREACT_WORLD_KNOWLEDGE_DB",
+            "data/history/world_knowledge.duckdb",
+        )
+    )
+    if not db_path.exists():
+        return {}, []
+
+    store = GeopoliticalStateStore(db_path, read_only=True)
+    canonical = store.states_for_focal(
+        focal_iso3,
+        mode="canonical",
+        as_of=as_of,
+    )
+    live = {
+        state.pair_key: state
+        for state in store.states_for_focal(
+            focal_iso3,
+            mode="live",
+            as_of=as_of,
+        )
+    }
+    signals: dict[str, RelationshipSignal] = {}
+    details: list[dict[str, object]] = []
+    for state in canonical:
+        counterpart = (
+            state.target_iso3
+            if state.source_iso3 == focal_iso3
+            else state.source_iso3
+        )
+        signals[counterpart] = RelationshipSignal(
+            focal_iso3=focal_iso3,
+            counterpart_iso3=counterpart,
+            score=state.overall_score,
+            confidence=state.confidence,
+            status=state.status,
+            event_count=state.event_count,
+            last_seen=(
+                pd.Timestamp(state.last_event_at).tz_localize(None)
+                if state.last_event_at is not None
+                and pd.Timestamp(state.last_event_at).tzinfo is not None
+                else (
+                    pd.Timestamp(state.last_event_at)
+                    if state.last_event_at is not None
+                    else None
+                )
+            ),
+            structural_alliance=(
+                "formal_alliance" in state.structural_anchors
+            ),
+        )
+        pulse = live.get(state.pair_key)
+        details.append(
+            {
+                "iso3": counterpart,
+                "pair_key": state.pair_key,
+                "overall_score": state.overall_score,
+                "confidence": state.confidence,
+                "coverage": state.coverage,
+                "status": state.status,
+                "diplomatic": state.vector.get("diplomatic_alignment", 0.0),
+                "security": state.vector.get("security_alignment", 0.0),
+                "economic": state.vector.get("economic_alignment", 0.0),
+                "institutional": state.vector.get("institutional_alignment", 0.0),
+                "conflict_intensity": state.vector.get("conflict_intensity", 0.0),
+                "event_count": state.event_count,
+                "structural_anchors": ", ".join(state.structural_anchors),
+                "live_score": pulse.overall_score if pulse else None,
+                "live_delta": pulse.live_delta if pulse else None,
+                "trend": pulse.trend if pulse else "no_live_pulse",
+                "state_as_of": state.as_of,
+            }
+        )
+    return signals, details
 
 def relationship_map_frame(
     focal_iso3: str,
@@ -412,17 +497,38 @@ def render_world_explorer(sidebar) -> None:
             status="error",
         )
 
+    state_details: list[dict[str, object]] = []
     try:
-        signals = build_relationship_layer(
-            edges,
-            focal_iso3=selected_iso3,
-            as_of=as_of,
-            structural_allies=structural_batch.allies,
-            min_events=1,
+        state_signals, state_details = _geopolitical_state_layers(
+            selected_iso3,
+            as_of=as_of.to_pydatetime().replace(tzinfo=timezone.utc),
         )
-    except ValueError as exc:
-        st.error(f"Relationship layer rejected: {exc}")
-        signals = {}
+    except Exception as exc:
+        state_signals = {}
+        st.caption(f"Geopolitical State Engine not available yet: {exc}")
+
+    if state_signals:
+        signals = state_signals
+        st.caption(
+            "Map layer: PREACT canonical geopolitical state · "
+            "multidimensional, evidence-weighted and point-in-time."
+        )
+    else:
+        try:
+            signals = build_relationship_layer(
+                edges,
+                focal_iso3=selected_iso3,
+                as_of=as_of,
+                structural_allies=structural_batch.allies,
+                min_events=1,
+            )
+        except ValueError as exc:
+            st.error(f"Relationship layer rejected: {exc}")
+            signals = {}
+        st.caption(
+            "Map layer: legacy GDELT aggregate baseline; canonical state "
+            "has not been built yet."
+        )
 
     map_frame = relationship_map_frame(selected_iso3, signals)
     event = st.plotly_chart(
@@ -565,6 +671,9 @@ def render_world_explorer(sidebar) -> None:
                         "tone",
                         "num_sources",
                         "num_articles",
+                        "corroborating_mentions",
+                        "mention_source_count",
+                        "mention_max_confidence",
                         "action_location",
                         "source_url",
                     )
@@ -667,12 +776,99 @@ def render_world_explorer(sidebar) -> None:
             else:
                 st.caption("No locally archived headlines match this country yet.")
 
+            gkg_rows = (
+                local_intelligence.get("gdelt_context", {}).get("documents", [])
+            )
+            if gkg_rows:
+                st.markdown("#### GDELT Knowledge Graph context")
+                gkg_frame = pd.DataFrame(gkg_rows)
+                for column in ("themes", "persons", "organizations"):
+                    if column in gkg_frame.columns:
+                        gkg_frame[column] = gkg_frame[column].map(
+                            lambda values: ", ".join(list(values)[:8])
+                            if isinstance(values, list)
+                            else values
+                        )
+                gkg_columns = [
+                    name
+                    for name in (
+                        "known_at",
+                        "source",
+                        "overall_tone",
+                        "themes",
+                        "persons",
+                        "organizations",
+                        "document_url",
+                    )
+                    if name in gkg_frame.columns
+                ]
+                st.dataframe(
+                    gkg_frame[gkg_columns],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config=(
+                        {
+                            "document_url": st.column_config.LinkColumn(
+                                "document",
+                                display_text="open",
+                            )
+                        }
+                        if "document_url" in gkg_columns
+                        else None
+                    ),
+                )
+                st.caption(
+                    "GDELT GKG context: provider-derived themes/entities/locations. "
+                    "This evidence is not automatically promoted into country facts."
+                )
+
         if local_intelligence is not None:
             recent = local_intelligence["recent_events"]["events"]
             st.markdown("#### Event stream")
             st.caption(f"{len(recent)} point-in-time event observations loaded.")
 
     with relations:
+        if state_details:
+            st.markdown("#### PREACT geopolitical state")
+            state_frame = pd.DataFrame(state_details)
+            state_frame["country"] = state_frame["iso3"].map(
+                lambda code: (
+                    f"{COUNTRY_BY_ISO3[code].flag} {COUNTRY_BY_ISO3[code].name}"
+                    if code in COUNTRY_BY_ISO3
+                    else code
+                )
+            )
+            state_frame = state_frame.sort_values(
+                ["confidence", "event_count"],
+                ascending=False,
+            )
+            st.dataframe(
+                state_frame[
+                    [
+                        "country",
+                        "status",
+                        "overall_score",
+                        "confidence",
+                        "coverage",
+                        "diplomatic",
+                        "security",
+                        "economic",
+                        "institutional",
+                        "conflict_intensity",
+                        "trend",
+                        "live_delta",
+                        "event_count",
+                        "structural_anchors",
+                    ]
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.caption(
+                "Canonical state is a latent estimate, not a factual friendship score. "
+                "Live delta compares the recent pulse with the consolidated state."
+            )
+
         st.markdown("#### Relationship evidence")
         relationship_rows = map_frame.loc[
             ~map_frame["status"].isin(["no_evidence", "selected"]),

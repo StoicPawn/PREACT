@@ -56,18 +56,35 @@ def _parse_zip_rows(
     payload: bytes,
     columns: list[str],
 ) -> list[dict[str, str]]:
-    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-        names = archive.namelist()
-        if not names:
-            return []
-        raw = archive.read(names[0]).decode("utf-8", errors="replace")
+    """Parse one provider TSV member without duplicating the full text in memory."""
 
+    previous_limit = csv.field_size_limit()
+    csv.field_size_limit(64 * 1024 * 1024)
     rows: list[dict[str, str]] = []
-    for values in csv.reader(io.StringIO(raw), delimiter="\t"):
-        if not values:
-            continue
-        padded = values + [""] * max(0, len(columns) - len(values))
-        rows.append(dict(zip(columns, padded[: len(columns)])))
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = archive.namelist()
+            if not names:
+                return []
+            with archive.open(names[0], "r") as member:
+                with io.TextIOWrapper(
+                    member,
+                    encoding="utf-8",
+                    errors="replace",
+                    newline="",
+                ) as text:
+                    for values in csv.reader(text, delimiter="\t"):
+                        if not values:
+                            continue
+                        padded = values + [""] * max(
+                            0,
+                            len(columns) - len(values),
+                        )
+                        rows.append(
+                            dict(zip(columns, padded[: len(columns)]))
+                        )
+    finally:
+        csv.field_size_limit(previous_limit)
     return rows
 
 

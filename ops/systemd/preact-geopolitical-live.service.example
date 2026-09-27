@@ -1,0 +1,16 @@
+[Unit]
+Description=PREACT live geopolitical pulse
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/acepc-data-hub
+Environment=PREACT_WORLD_KNOWLEDGE_DB=/var/lib/preact/history/world_knowledge.duckdb
+Environment=PREACT_GRAPH_DB=/var/lib/preact/history/preact_graph.duckdb
+ExecStart=/opt/preact/.venv/bin/python scripts/refresh_geopolitical_state.py --mode live
+TimeoutStartSec=15m
+NoNewPrivileges=true
+PrivateTmp=true
