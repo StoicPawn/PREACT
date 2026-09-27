@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -10,13 +11,15 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from .gateway import SharedProviderGateway
 from .gdelt import gdelt_doc_articles
 from .google_news import google_news_search
+from .news_store import SharedNewsStore
 from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.source_catalog import SOURCE_BY_ID, SOURCES
 
 ROOT = Path(os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"))
 TOKEN = os.getenv("SHARED_DATA_HUB_TOKEN", "").strip()
 gateway = SharedProviderGateway(ROOT)
-app = FastAPI(title="PREACT Shared Data Hub", version="0.1.0")
+news_store = SharedNewsStore(ROOT / "shared_news.duckdb")
+app = FastAPI(title="PREACT Shared Data Hub", version="0.2.0")
 
 
 def _authorize(authorization: str | None) -> None:
@@ -35,6 +38,41 @@ def health() -> dict[str, str]:
 def provider_stats(authorization: str | None = Header(default=None)) -> dict:
     _authorize(authorization)
     return {"providers": gateway.stats()}
+
+@app.get("/v1/news/stats")
+def shared_news_stats(authorization: str | None = Header(default=None)) -> dict:
+    _authorize(authorization)
+    return news_store.stats()
+
+
+@app.get("/v1/news/latest")
+def shared_news_latest(
+    q: str | None = Query(None, max_length=500),
+    provider: str | None = Query(None, max_length=64),
+    language: str | None = Query(None, max_length=16),
+    feed_id: str | None = Query(None, max_length=128),
+    known_cutoff: datetime | None = Query(
+        None,
+        description="Return only observations acquired no later than this instant",
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    rows = news_store.latest(
+        limit=limit,
+        query=q,
+        provider=provider,
+        language=language,
+        feed_id=feed_id,
+        known_cutoff=known_cutoff,
+    )
+    return {
+        "mode": "local_archive",
+        "external_provider_call": False,
+        "articles": rows,
+    }
+
 
 
 @app.get("/v1/sources")
