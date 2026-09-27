@@ -172,8 +172,9 @@ def test_simulation_run_and_results_endpoint(tmp_path) -> None:
 
 def test_world_knowledge_status_requires_configured_store(tmp_path) -> None:
     client, _orchestrator, _service = create_test_client(tmp_path)
-    response = client.get("/world/knowledge/status")
-    assert response.status_code == 503
+    with pytest.raises(Exception) as exc_info:
+        client.get("/world/knowledge/status")
+    assert getattr(exc_info.value, "status_code", None) == 503
 
 
 def test_world_country_knowledge_endpoint_is_point_in_time(tmp_path) -> None:
