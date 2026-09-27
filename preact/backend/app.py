@@ -19,6 +19,7 @@ from ..analytics import StateGraph, build_state_graph
 from ..config import PREACTConfig
 from ..data_ingestion.orchestrator import DataIngestionOrchestrator
 from ..data_ingestion.sources import GDELTQuery, GDELTSource, IngestionResult
+from ..history.world_knowledge_store import WorldKnowledgeStore
 from ..simulation.service import SimulationService
 from ..simulation.storage import SimulationRepository
 from ..simulation.templates import default_templates
@@ -193,6 +194,7 @@ def create_app(
     config: PREACTConfig | None = None,
     orchestrator: DataIngestionOrchestrator | None = None,
     simulation_service: SimulationService | None = None,
+    world_knowledge_store: WorldKnowledgeStore | None = None,
 ) -> FastAPI:
     """Create a FastAPI application configured for the PREACT platform."""
 
@@ -214,6 +216,11 @@ def create_app(
     app = FastAPI(title="PREACT Platform API", version="0.1.0")
     app.state.orchestrator = orchestrator
     app.state.simulation_service = simulation_service
+    if world_knowledge_store is None and config is not None:
+        world_knowledge_store = WorldKnowledgeStore(
+            Path(config.storage.root_dir) / "world_knowledge.duckdb"
+        )
+    app.state.world_knowledge_store = world_knowledge_store
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
@@ -233,6 +240,54 @@ def create_app(
         )
         summary = _summarise_ingestion(artifacts)
         return {"status": "ok", "summary": summary}
+
+    @app.get("/world/knowledge/status")
+    def world_knowledge_status() -> Dict[str, Any]:
+        store = app.state.world_knowledge_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="World Knowledge store is not configured")
+        return {
+            "status": "ok",
+            "mode": "autonomous_fail_closed",
+            **store.status(),
+        }
+
+    @app.get("/world/countries/{iso3}/knowledge")
+    def world_country_knowledge(
+        iso3: str,
+        as_of: datetime | None = Query(None, description="World-state time"),
+        known_cutoff: datetime | None = Query(
+            None,
+            description="Knowledge-time cutoff used to prevent hindsight leakage",
+        ),
+    ) -> Dict[str, Any]:
+        store = app.state.world_knowledge_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="World Knowledge store is not configured")
+
+        country = str(iso3).strip().upper()
+        if len(country) != 3 or not country.isalpha():
+            raise HTTPException(status_code=400, detail="iso3 must be a three-letter country code")
+
+        entity_id = f"country:{country}"
+        if as_of is None:
+            state = store.current_state(entity_id)
+        else:
+            cutoff = known_cutoff or as_of
+            state = store.state_as_of(entity_id, as_of, known_cutoff=cutoff)
+
+        return {
+            "entity_id": entity_id,
+            "iso3": country,
+            "as_of": as_of.isoformat() if as_of else None,
+            "known_cutoff": (known_cutoff or as_of).isoformat() if as_of else None,
+            "knowledge": state,
+            "semantic_contract": {
+                "facts_are_versioned": True,
+                "interpretations_are_separate": True,
+                "forecasts_do_not_mutate_facts": True,
+            },
+        }
 
     service = simulation_service
 
