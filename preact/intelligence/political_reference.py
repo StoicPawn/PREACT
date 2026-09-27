@@ -235,6 +235,7 @@ def refresh_political_reference(
 
     refs = list(references)
     seeded = unchanged = change_candidates = promoted = held = skipped = considered = 0
+    seed_candidates: list[KnowledgeUpdateCandidate] = []
 
     # A changed current-office assertion needs Wikidata + two independent news
     # publisher groups. A future authoritative primary-source connector can still
@@ -278,8 +279,7 @@ def refresh_political_reference(
                     evidence=(wikidata_evidence,),
                     confidence=0.82,
                 )
-                _assertion_id, was_seeded = store.seed_reference_fact(candidate)
-                seeded += int(was_seeded)
+                seed_candidates.append(candidate)
                 continue
 
             if _canonical(existing.get("value")) == _canonical(value):
@@ -307,6 +307,10 @@ def refresh_political_reference(
                 promoted += 1
             else:
                 held += 1
+
+    if seed_candidates:
+        seed_results = store.seed_reference_facts(seed_candidates)
+        seeded = sum(1 for _assertion_id, was_seeded in seed_results.values() if was_seeded)
 
     return PoliticalReferenceRefreshResult(
         references=len(refs),
