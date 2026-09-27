@@ -12,7 +12,7 @@ from datetime import datetime
 from math import exp, log1p, tanh
 from typing import Any, Iterable, Mapping, Sequence
 
-MODEL_VERSION = "geopolitical-state-v3"
+MODEL_VERSION = "geopolitical-state-v4"
 
 SIGNED_DIMENSIONS = (
     "diplomatic_alignment",
@@ -546,7 +546,11 @@ def estimate_pair_state(
 
     if confidence < 0.15:
         status = "insufficient_evidence"
-    elif vector["conflict_intensity"] >= 0.72 and overall <= -0.25:
+    elif (
+        vector["conflict_intensity"] >= 0.72 and overall <= -0.25
+    ) or (
+        vector["conflict_intensity"] >= 0.50 and overall <= -0.50
+    ):
         status = "conflict"
     elif overall <= -0.18 or vector["conflict_intensity"] >= 0.45:
         status = "tension"
