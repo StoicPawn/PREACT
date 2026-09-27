@@ -1,0 +1,17 @@
+[Unit]
+Description=PREACT structured political reference refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
+Environment=PREACT_WORLD_KNOWLEDGE_DB=/var/lib/preact/history/world_knowledge.duckdb
+Environment=WIKIDATA_POLITICAL_TTL_SECONDS=7200
+ExecStart=/opt/preact/.venv/bin/python scripts/refresh_political_reference.py
+TimeoutStartSec=10m
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
