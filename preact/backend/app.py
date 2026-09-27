@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -19,7 +20,10 @@ from ..analytics import StateGraph, build_state_graph
 from ..config import PREACTConfig
 from ..data_ingestion.orchestrator import DataIngestionOrchestrator
 from ..data_ingestion.sources import GDELTQuery, GDELTSource, IngestionResult
+from ..data_hub.news_store import SharedNewsStore
+from ..history.warehouse import HistoricalWarehouse
 from ..history.world_knowledge_store import WorldKnowledgeStore
+from ..intelligence.country_intelligence import assemble_country_intelligence_profile
 from ..simulation.service import SimulationService
 from ..simulation.storage import SimulationRepository
 from ..simulation.templates import default_templates
@@ -208,6 +212,8 @@ def create_app(
     orchestrator: DataIngestionOrchestrator | None = None,
     simulation_service: SimulationService | None = None,
     world_knowledge_store: WorldKnowledgeStore | None = None,
+    historical_warehouse: HistoricalWarehouse | None = None,
+    shared_news_store: SharedNewsStore | None = None,
 ) -> FastAPI:
     """Create a FastAPI application configured for the PREACT platform."""
 
@@ -229,11 +235,38 @@ def create_app(
     app = FastAPI(title="PREACT Platform API", version="0.1.0")
     app.state.orchestrator = orchestrator
     app.state.simulation_service = simulation_service
+
     if world_knowledge_store is None and config is not None:
-        world_knowledge_store = WorldKnowledgeStore(
-            Path(config.storage.root_dir) / "world_knowledge.duckdb"
+        configured_world = os.getenv("PREACT_WORLD_KNOWLEDGE_DB", "").strip()
+        world_path = (
+            Path(configured_world)
+            if configured_world
+            else Path(config.storage.root_dir) / "world_knowledge.duckdb"
         )
+        world_knowledge_store = WorldKnowledgeStore(world_path)
+
+    if historical_warehouse is None:
+        history_path = Path(
+            os.getenv("PREACT_HISTORY_DB", "data/history/preact_history.duckdb")
+        )
+        if history_path.exists():
+            historical_warehouse = HistoricalWarehouse(history_path)
+
+    if shared_news_store is None:
+        explicit_news = os.getenv("SHARED_NEWS_DB", "").strip()
+        if explicit_news:
+            news_path = Path(explicit_news)
+        else:
+            hub_root = Path(
+                os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub")
+            )
+            news_path = hub_root / "shared_news.duckdb"
+        if news_path.exists():
+            shared_news_store = SharedNewsStore(news_path)
+
     app.state.world_knowledge_store = world_knowledge_store
+    app.state.historical_warehouse = historical_warehouse
+    app.state.shared_news_store = shared_news_store
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
@@ -304,6 +337,44 @@ def create_app(
                 "forecasts_do_not_mutate_facts": True,
             },
         }
+
+    @app.get("/world/countries/{iso3}/profile")
+    def world_country_profile(
+        iso3: str,
+        as_of: datetime | None = Query(None, description="World-state time"),
+        known_cutoff: datetime | None = Query(
+            None,
+            description="Knowledge-time cutoff used to prevent hindsight leakage",
+        ),
+        event_limit: int = Query(100, ge=1, le=500),
+        news_limit: int = Query(30, ge=1, le=200),
+    ) -> Dict[str, Any]:
+        store = app.state.world_knowledge_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="World Knowledge store is not configured")
+
+        country = str(iso3).strip().upper()
+        if len(country) != 3 or not country.isalpha():
+            raise HTTPException(status_code=400, detail="iso3 must be a three-letter country code")
+
+        as_of_dt = _coerce_query_datetime(as_of, "as_of") or datetime.now(timezone.utc)
+        known_cutoff_dt = (
+            _coerce_query_datetime(known_cutoff, "known_cutoff") or as_of_dt
+        )
+
+        try:
+            return assemble_country_intelligence_profile(
+                country,
+                world=store,
+                as_of=as_of_dt,
+                known_cutoff=known_cutoff_dt,
+                warehouse=app.state.historical_warehouse,
+                news=app.state.shared_news_store,
+                event_limit=int(event_limit),
+                news_limit=int(news_limit),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/world/countries/{iso3}/events")
     def world_country_events(
