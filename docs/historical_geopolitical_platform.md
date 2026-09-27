@@ -124,3 +124,26 @@ Reproducible benchmark suite; model cards; source/licence registry; documented f
 ## Architectural decision
 
 The existing PREACT coup/atrocity pipeline remains one specialised risk module. The historical temporal layer becomes the common substrate for all future risk, replay and simulation modules.
+
+## World Intelligence expansion
+
+The Historical-Geopolitical Platform is now the temporal substrate of the wider **PREACT World Intelligence System**.
+
+The primary product surface becomes a globe-first country and relationship explorer. The current World Explorer is the prototype for this direction; the definitive frontend is expected to move to a dedicated WebGL globe while keeping the existing FastAPI and temporal data contracts.
+
+Autonomous maintenance is part of the core architecture rather than a later editorial feature:
+
+```text
+continuous sources
+ -> candidate facts/events
+ -> provenance + entity resolution
+ -> corroboration
+ -> materiality / temporal checks
+ -> versioned world-state mutation
+ -> narrative regeneration
+ -> downstream forecast consumption
+```
+
+The system never permits an interpretation or forecast to overwrite an observed factual assertion.
+
+The expanded milestone sequence, including political-system knowledge, deep history, sociological atlas, relationship graph 2.0 and autonomous narrative maintenance, is defined in `docs/world_intelligence_roadmap.md`.
