@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import duckdb
 
+from preact.intelligence.world_events import WorldEventObservation
 from preact.intelligence.world_knowledge import (
     KnowledgeDomain,
     KnowledgeUpdateCandidate,
@@ -106,6 +107,47 @@ class WorldKnowledgeStore:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
                 )
                 """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS world_event_observations (
+                    observation_id VARCHAR PRIMARY KEY,
+                    provider VARCHAR NOT NULL,
+                    provider_event_id VARCHAR NOT NULL,
+                    event_time TIMESTAMPTZ NOT NULL,
+                    known_at TIMESTAMPTZ NOT NULL,
+                    actor1_entity_id VARCHAR NOT NULL,
+                    actor2_entity_id VARCHAR,
+                    event_code VARCHAR,
+                    event_base_code VARCHAR,
+                    event_root_code VARCHAR,
+                    quad_class INTEGER,
+                    goldstein DOUBLE,
+                    tone DOUBLE,
+                    num_mentions DOUBLE,
+                    num_sources DOUBLE,
+                    num_articles DOUBLE,
+                    actor1_name VARCHAR,
+                    actor2_name VARCHAR,
+                    action_location VARCHAR,
+                    source_url VARCHAR,
+                    snapshot_checksum VARCHAR,
+                    evidence_class VARCHAR NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_actor1 "
+                "ON world_event_observations(actor1_entity_id, event_time, known_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_actor2 "
+                "ON world_event_observations(actor2_entity_id, event_time, known_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_provider "
+                "ON world_event_observations(provider, provider_event_id, known_at)"
             )
             conn.execute(
                 """
@@ -377,6 +419,95 @@ class WorldKnowledgeStore:
 
         return assertion_id
 
+    def record_world_events(self, events: Iterable[WorldEventObservation]) -> int:
+        """Persist immutable provider-event observations.
+
+        Repeated snapshots of the same provider event are preserved as separate
+        observations when their knowledge time or snapshot checksum differs.
+        """
+        inserted = 0
+        with self.connect() as conn:
+            for event in events:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO world_event_observations(
+                        observation_id,provider,provider_event_id,event_time,known_at,
+                        actor1_entity_id,actor2_entity_id,event_code,event_base_code,
+                        event_root_code,quad_class,goldstein,tone,num_mentions,
+                        num_sources,num_articles,actor1_name,actor2_name,
+                        action_location,source_url,snapshot_checksum,evidence_class
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        event.observation_id,
+                        event.provider,
+                        event.provider_event_id,
+                        event.event_time,
+                        event.known_at,
+                        event.actor1_entity_id,
+                        event.actor2_entity_id,
+                        event.event_code,
+                        event.event_base_code,
+                        event.event_root_code,
+                        event.quad_class,
+                        event.goldstein,
+                        event.tone,
+                        event.num_mentions,
+                        event.num_sources,
+                        event.num_articles,
+                        event.actor1_name,
+                        event.actor2_name,
+                        event.action_location,
+                        event.source_url,
+                        event.snapshot_checksum,
+                        event.evidence_class,
+                    ],
+                )
+                inserted += int(bool(cursor.rowcount))
+        return inserted
+
+    def event_timeline(
+        self,
+        entity_id: str,
+        *,
+        as_of: datetime,
+        known_cutoff: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return one latest-known observation per provider event at a cutoff."""
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        cutoff = known_cutoff or as_of
+
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY provider, provider_event_id
+                               ORDER BY known_at DESC, created_at DESC
+                           ) AS rn
+                    FROM world_event_observations
+                    WHERE event_time <= ?
+                      AND known_at <= ?
+                      AND (actor1_entity_id = ? OR actor2_entity_id = ?)
+                )
+                SELECT observation_id,provider,provider_event_id,event_time,known_at,
+                       actor1_entity_id,actor2_entity_id,event_code,event_base_code,
+                       event_root_code,quad_class,goldstein,tone,num_mentions,
+                       num_sources,num_articles,actor1_name,actor2_name,
+                       action_location,source_url,snapshot_checksum,evidence_class
+                FROM ranked
+                WHERE rn=1
+                ORDER BY event_time DESC, known_at DESC
+                LIMIT ?
+                """,
+                [as_of, cutoff, entity_id, entity_id, int(limit)],
+            )
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def current_state(self, entity_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             rows = conn.execute(
@@ -443,6 +574,9 @@ class WorldKnowledgeStore:
             evidence_observations = int(
                 conn.execute("SELECT COUNT(*) FROM world_knowledge_evidence").fetchone()[0]
             )
+            event_observations = int(
+                conn.execute("SELECT COUNT(*) FROM world_event_observations").fetchone()[0]
+            )
             distinct_claims = int(
                 conn.execute(
                     "SELECT COUNT(DISTINCT claim_key) FROM world_knowledge_candidates "
@@ -458,6 +592,7 @@ class WorldKnowledgeStore:
             "candidates": candidates,
             "distinct_claims": distinct_claims,
             "evidence_observations": evidence_observations,
+            "event_observations": event_observations,
             "decisions": decisions,
             "assertions": assertions,
             "current_assertions": current_assertions,
