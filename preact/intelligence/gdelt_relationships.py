@@ -15,7 +15,7 @@ from typing import Iterable
 import pandas as pd
 import pycountry
 from preact.analytics.gdelt_graphs import build_state_graph
-from preact.data_hub.gdelt_realtime import parse_event_zip
+from preact.intelligence.gdelt_ingest import parse_event_zip
 from preact.history.connectors.base import BulkFileConnector
 from preact.history.connectors.gdelt_cameo import (
     CAMEOCountryMap,

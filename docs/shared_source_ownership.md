@@ -39,3 +39,16 @@ GoldenBull retains direct GDELT and Google News access only as emergency fallbac
 ## Measurement
 
 The hub exposes /v1/stats with internal call count, cache hits, single-flight reuse, external requests and deduplicated request count per provider operation. This is the acceptance evidence for the shared-connection design.
+
+## External runtime ownership
+
+The scheduled Shared Data Hub runtime is outside PREACT in the separate repository **StoicPawn/acepc-data-hub**. PREACT must not schedule or perform GDELT Events/Mentions/GKG downloads during normal operation.
+
+The production split is:
+
+- ACEPC Data Hub: acquire and archive provider-native GDELT Events, Mentions, GKG and CAMEO reference snapshots.
+- PREACT Events consumer: build country/country interaction graphs and temporal event memory.
+- PREACT Mentions consumer: derive corroboration, source diversity and media-attention evidence.
+- PREACT GKG consumer: extract themes, people, organisations, locations and contextual entity evidence.
+
+This boundary is intentional: the hub preserves what GDELT observed; PREACT decides what that evidence means for political, historical and geopolitical intelligence.
