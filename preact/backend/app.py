@@ -183,6 +183,19 @@ def _serialise_events(frame: pd.DataFrame, limit: int) -> Iterable[Dict[str, Any
     return _serialise_records(subset, limit)
 
 
+def _coerce_query_datetime(value: datetime | str | None, field_name: str) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid {field_name} datetime") from exc
+    raise HTTPException(status_code=400, detail=f"Invalid {field_name} datetime")
+
+
 def _find_gdelt_source(orchestrator: DataIngestionOrchestrator) -> GDELTSource:
     for source in orchestrator.sources.values():
         if isinstance(source, GDELTSource):
@@ -270,17 +283,20 @@ def create_app(
             raise HTTPException(status_code=400, detail="iso3 must be a three-letter country code")
 
         entity_id = f"country:{country}"
-        if as_of is None:
+        as_of_dt = _coerce_query_datetime(as_of, "as_of")
+        known_cutoff_dt = _coerce_query_datetime(known_cutoff, "known_cutoff")
+
+        if as_of_dt is None:
             state = store.current_state(entity_id)
         else:
-            cutoff = known_cutoff or as_of
-            state = store.state_as_of(entity_id, as_of, known_cutoff=cutoff)
+            cutoff = known_cutoff_dt or as_of_dt
+            state = store.state_as_of(entity_id, as_of_dt, known_cutoff=cutoff)
 
         return {
             "entity_id": entity_id,
             "iso3": country,
-            "as_of": as_of.isoformat() if as_of else None,
-            "known_cutoff": (known_cutoff or as_of).isoformat() if as_of else None,
+            "as_of": as_of_dt.isoformat() if as_of_dt else None,
+            "known_cutoff": (known_cutoff_dt or as_of_dt).isoformat() if as_of_dt else None,
             "knowledge": state,
             "semantic_contract": {
                 "facts_are_versioned": True,
