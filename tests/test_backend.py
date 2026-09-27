@@ -19,6 +19,14 @@ from preact.simulation.service import SimulationService
 from preact.simulation.storage import SimulationRepository
 from preact.data_ingestion.orchestrator import IngestionArtifacts
 from preact.data_ingestion.sources import GDELTSource, IngestionResult
+from preact.history.world_knowledge_store import WorldKnowledgeStore
+from preact.intelligence.knowledge_update import AutonomousKnowledgeUpdater
+from preact.intelligence.world_knowledge import (
+    KnowledgeDomain,
+    KnowledgeUpdateCandidate,
+    KnowledgeUpdateKind,
+    SourceEvidence,
+)
 
 
 class DummyOrchestrator:
@@ -160,3 +168,72 @@ def test_simulation_run_and_results_endpoint(tmp_path) -> None:
     assert results_payload["kpis"]["tax_revenue"] >= 0
     assert results_payload["timeline"]
 
+
+
+def test_world_knowledge_status_requires_configured_store(tmp_path) -> None:
+    client, _orchestrator, _service = create_test_client(tmp_path)
+    response = client.get("/world/knowledge/status")
+    assert response.status_code == 503
+
+
+def test_world_country_knowledge_endpoint_is_point_in_time(tmp_path) -> None:
+    orchestrator = DummyOrchestrator()
+    repository = SimulationRepository(tmp_path / "sim-world.duckdb", export_dir=tmp_path / "exports-world")
+    service = SimulationService(repository=repository)
+    store = WorldKnowledgeStore(tmp_path / "world-knowledge.duckdb")
+    updater = AutonomousKnowledgeUpdater(store)
+
+    first_time = datetime.fromisoformat("2026-09-26T12:00:00+00:00")
+    second_time = datetime.fromisoformat("2026-09-27T12:00:00+00:00")
+
+    def official(value: str, when: datetime, suffix: str) -> KnowledgeUpdateCandidate:
+        source = SourceEvidence(
+            source="official",
+            source_ref=f"https://example.com/{suffix}",
+            published_at=when,
+            retrieved_at=when,
+            independent_group="government",
+            authoritative=True,
+        )
+        return KnowledgeUpdateCandidate(
+            entity_id="country:ITA",
+            field="head_of_government",
+            value=value,
+            valid_from=when,
+            detected_at=when,
+            domain=KnowledgeDomain.GOVERNANCE,
+            kind=KnowledgeUpdateKind.FACT,
+            confidence=0.95,
+            evidence=(source,),
+        )
+
+    updater.process(official("Person A", first_time, "a"))
+    updater.process(official("Person B", second_time, "b"))
+
+    app = create_app(
+        orchestrator=orchestrator,
+        simulation_service=service,
+        world_knowledge_store=store,
+    )
+    client = TestClient(app)
+
+    current = client.get("/world/countries/ita/knowledge")
+    assert current.status_code == 200
+    current_payload = current.json()
+    assert current_payload["knowledge"]["head_of_government"]["value"] == "Person B"
+    assert current_payload["semantic_contract"]["forecasts_do_not_mutate_facts"] is True
+
+    historical = client.get(
+        "/world/countries/ITA/knowledge",
+        params={
+            "as_of": first_time.isoformat(),
+            "known_cutoff": first_time.isoformat(),
+        },
+    )
+    assert historical.status_code == 200
+    assert historical.json()["knowledge"]["head_of_government"]["value"] == "Person A"
+
+    status = client.get("/world/knowledge/status")
+    assert status.status_code == 200
+    assert status.json()["current_assertions"] == 1
+    assert status.json()["queued_narrative_jobs"] >= 1
