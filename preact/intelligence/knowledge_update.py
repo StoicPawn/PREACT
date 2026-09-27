@@ -40,16 +40,18 @@ class AutonomousKnowledgeUpdater:
         self.policy = policy
 
     def process(self, candidate: KnowledgeUpdateCandidate) -> KnowledgeUpdateResult:
+        """Persist one observation, aggregate its claim, then evaluate corroboration."""
         is_new = self.store.record_candidate(candidate)
-        decision = evaluate_candidate(candidate, self.policy)
+        aggregated = self.store.aggregate_claim(candidate.claim_key())
+        decision = evaluate_candidate(aggregated, self.policy)
         self.store.record_decision(decision)
 
         assertion_id: Optional[str] = None
         if decision.action is PromotionAction.AUTO_PROMOTE_FACT:
-            assertion_id = self.store.promote_fact(candidate, decision)
+            assertion_id = self.store.promote_fact(aggregated, decision)
 
         return KnowledgeUpdateResult(
-            candidate_id=str(candidate.candidate_id),
+            candidate_id=str(aggregated.candidate_id),
             decision=decision,
             assertion_id=assertion_id,
             candidate_was_new=is_new,
