@@ -16,6 +16,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import duckdb
 
+from .entity_resolution import resolve_country_mentions
+
 
 _TRACKING_PARAMS = {
     "utm_source",
@@ -156,6 +158,7 @@ class SharedNewsStore:
                     language VARCHAR,
                     snippet VARCHAR,
                     image_url VARCHAR,
+                    entity_resolution_done BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
                 )
                 """
@@ -168,11 +171,31 @@ class SharedNewsStore:
                 ("language", "VARCHAR"),
                 ("snippet", "VARCHAR"),
                 ("image_url", "VARCHAR"),
+                ("entity_resolution_done", "BOOLEAN DEFAULT FALSE"),
             ):
                 conn.execute(
                     f"ALTER TABLE shared_news_observations "
                     f"ADD COLUMN IF NOT EXISTS {column} {sql_type}"
                 )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shared_news_entity_mentions (
+                    mention_id VARCHAR PRIMARY KEY,
+                    observation_id VARCHAR NOT NULL,
+                    article_id VARCHAR NOT NULL,
+                    entity_id VARCHAR NOT NULL,
+                    entity_type VARCHAR NOT NULL,
+                    resolver VARCHAR NOT NULL,
+                    confidence DOUBLE NOT NULL,
+                    matched_alias VARCHAR,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_shared_news_entity "
+                "ON shared_news_entity_mentions(entity_id, observation_id, confidence)"
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_shared_news_time "
                 "ON shared_news_articles(published_at, last_seen_at)"
@@ -211,6 +234,98 @@ class SharedNewsStore:
             ]
         )
         return "sno_" + sha256(material.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _mention_id(
+        observation_id: str,
+        entity_id: str,
+        resolver: str,
+        matched_alias: str,
+    ) -> str:
+        material = "|".join(
+            [observation_id, entity_id, resolver, matched_alias]
+        )
+        return "snm_" + sha256(material.encode("utf-8")).hexdigest()[:24]
+
+    def _resolve_observation_countries(
+        self,
+        conn,
+        *,
+        observation_id: str,
+        article_id: str,
+        title: str,
+        snippet: str | None,
+    ) -> int:
+        inserted = 0
+        mentions = resolve_country_mentions(title=title, snippet=snippet)
+        for mention in mentions:
+            mention_id = self._mention_id(
+                observation_id,
+                mention.entity_id,
+                mention.resolver,
+                mention.matched_alias,
+            )
+            if conn.execute(
+                "SELECT 1 FROM shared_news_entity_mentions WHERE mention_id=?",
+                [mention_id],
+            ).fetchone():
+                continue
+            conn.execute(
+                """
+                INSERT INTO shared_news_entity_mentions(
+                    mention_id,observation_id,article_id,entity_id,entity_type,
+                    resolver,confidence,matched_alias
+                ) VALUES (?,?,?,?,?,?,?,?)
+                """,
+                [
+                    mention_id,
+                    observation_id,
+                    article_id,
+                    mention.entity_id,
+                    "country",
+                    mention.resolver,
+                    float(mention.confidence),
+                    mention.matched_alias,
+                ],
+            )
+            inserted += 1
+        conn.execute(
+            "UPDATE shared_news_observations "
+            "SET entity_resolution_done=TRUE WHERE observation_id=?",
+            [observation_id],
+        )
+        return inserted
+
+    def backfill_country_mentions(self, *, limit: int = 10000) -> dict[str, int]:
+        """Resolve country mentions for observations created before resolver v1."""
+
+        safe_limit = max(1, min(int(limit), 100000))
+        processed = 0
+        inserted = 0
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT observation_id,article_id,title,snippet
+                FROM shared_news_observations
+                WHERE COALESCE(entity_resolution_done,FALSE)=FALSE
+                ORDER BY retrieved_at,observation_id
+                LIMIT ?
+                """,
+                [safe_limit],
+            ).fetchall()
+            for observation_id, article_id, title, snippet in rows:
+                inserted += self._resolve_observation_countries(
+                    conn,
+                    observation_id=str(observation_id),
+                    article_id=str(article_id),
+                    title=str(title or ""),
+                    snippet=(str(snippet) if snippet is not None else None),
+                )
+                processed += 1
+        return {
+            "processed_observations": processed,
+            "inserted_mentions": inserted,
+        }
 
     def upsert_articles(
         self,
@@ -310,18 +425,29 @@ class SharedNewsStore:
                     snapshot_checksum=snapshot_checksum,
                     feed_id=feed_id,
                 )
-                if conn.execute(
-                    "SELECT 1 FROM shared_news_observations WHERE observation_id=?",
+                existing_observation = conn.execute(
+                    "SELECT COALESCE(entity_resolution_done,FALSE) "
+                    "FROM shared_news_observations WHERE observation_id=?",
                     [observation_id],
-                ).fetchone():
+                ).fetchone()
+                if existing_observation:
+                    if not bool(existing_observation[0]):
+                        self._resolve_observation_countries(
+                            conn,
+                            observation_id=observation_id,
+                            article_id=article_id,
+                            title=title,
+                            snippet=snippet,
+                        )
                     continue
                 conn.execute(
                     """
                     INSERT INTO shared_news_observations(
                         observation_id,article_id,provider,source_ref,retrieved_at,
                         snapshot_checksum,feed_id,raw_url,title,published_at,
-                        publisher,domain,language,snippet,image_url
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        publisher,domain,language,snippet,image_url,
+                        entity_resolution_done
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,FALSE)
                     """,
                     [
                         observation_id,
@@ -342,6 +468,13 @@ class SharedNewsStore:
                     ],
                 )
                 inserted_observations += 1
+                self._resolve_observation_countries(
+                    conn,
+                    observation_id=observation_id,
+                    article_id=article_id,
+                    title=title,
+                    snippet=snippet,
+                )
 
         return {
             "inserted_articles": inserted_articles,
@@ -356,6 +489,8 @@ class SharedNewsStore:
         provider: str | None = None,
         language: str | None = None,
         feed_id: str | None = None,
+        entity_id: str | None = None,
+        min_entity_confidence: float = 0.80,
         known_cutoff: datetime | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 500))
@@ -374,6 +509,13 @@ class SharedNewsStore:
         if feed_id:
             clauses.append("o.feed_id = ?")
             params.append(str(feed_id))
+        if entity_id:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM shared_news_entity_mentions m "
+                "WHERE m.observation_id=o.observation_id "
+                "AND m.entity_id=? AND m.confidence>=?)"
+            )
+            params.extend([str(entity_id), float(min_entity_confidence)])
         if query:
             needle = f"%{str(query).strip().lower()}%"
             clauses.append(
@@ -434,6 +576,13 @@ class SharedNewsStore:
         with self.connect() as conn:
             articles = int(conn.execute("SELECT COUNT(*) FROM shared_news_articles").fetchone()[0])
             observations = int(conn.execute("SELECT COUNT(*) FROM shared_news_observations").fetchone()[0])
+            mentions = int(conn.execute("SELECT COUNT(*) FROM shared_news_entity_mentions").fetchone()[0])
+            unresolved = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM shared_news_observations "
+                    "WHERE COALESCE(entity_resolution_done,FALSE)=FALSE"
+                ).fetchone()[0]
+            )
             rows = conn.execute(
                 """
                 SELECT provider,COUNT(*) AS n,MAX(retrieved_at) AS newest
@@ -445,6 +594,8 @@ class SharedNewsStore:
         return {
             "articles": articles,
             "observations": observations,
+            "entity_mentions": mentions,
+            "unresolved_observations": unresolved,
             "providers": {
                 str(provider): {"observations": int(count), "newest_retrieved_at": newest}
                 for provider, count, newest in rows
