@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from preact.data_hub.gdelt_realtime import _EVENT_COLUMNS
+from preact.intelligence.gdelt_ingest import _EVENT_COLUMNS
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.intelligence.gdelt_relationships import (
     load_recent_relationship_edges,

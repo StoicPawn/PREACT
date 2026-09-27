@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from preact.data_hub.gdelt_realtime import parse_event_zip
+from preact.intelligence.gdelt_ingest import parse_event_zip
 from preact.data_hub.google_news import parse_google_news_rss
 from preact.data_hub.projection_ledger import ProjectionLedger
 from preact.history.document_store import HistoricalDocumentStore
