@@ -86,9 +86,19 @@ def _fold(value: object) -> str:
     return _NON_WORD.sub(" ", text).strip()
 
 
+def _canonical_title(article: Mapping[str, Any]) -> str:
+    raw = str(article.get("title") or "").strip()
+    publisher = str(article.get("publisher") or "").strip()
+    if publisher:
+        suffix = f" - {publisher}"
+        if raw.lower().endswith(suffix.lower()):
+            raw = raw[: -len(suffix)].rstrip()
+    return _fold(raw)
+
+
 def _canonical_key(article: Mapping[str, Any], published_at: datetime) -> str:
-    title = _fold(article.get("title"))
-    publisher = _fold(article.get("publisher") or article.get("domain"))
+    title = _canonical_title(article)
+    publisher = _fold(article.get("domain") or article.get("publisher"))
     # Title/publisher/day is intentionally the first cross-provider key. A direct
     # canonical URL is still retained for exact duplicate detection and navigation.
     material = "|".join([title, publisher, published_at.date().isoformat()])
