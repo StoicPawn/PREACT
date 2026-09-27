@@ -433,16 +433,20 @@ class WorldKnowledgeStore:
         inserted = 0
         with self.connect() as conn:
             for event in events:
-                row = conn.execute(
+                if conn.execute(
+                    "SELECT 1 FROM world_event_observations WHERE observation_id=?",
+                    [event.observation_id],
+                ).fetchone():
+                    continue
+                conn.execute(
                     """
-                    INSERT OR IGNORE INTO world_event_observations(
+                    INSERT INTO world_event_observations(
                         observation_id,provider,provider_event_id,event_time,known_at,
                         actor1_entity_id,actor2_entity_id,event_code,event_base_code,
                         event_root_code,quad_class,goldstein,tone,num_mentions,
                         num_sources,num_articles,actor1_name,actor2_name,
                         action_location,source_url,snapshot_checksum,evidence_class
                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    RETURNING observation_id
                     """,
                     [
                         event.observation_id,
@@ -468,8 +472,8 @@ class WorldKnowledgeStore:
                         event.snapshot_checksum,
                         event.evidence_class,
                     ],
-                ).fetchone()
-                inserted += int(row is not None)
+                )
+                inserted += 1
         return inserted
 
     def event_timeline(
