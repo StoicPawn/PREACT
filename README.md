@@ -123,4 +123,33 @@ Il progetto è pensato per integrare modelli di IA sempre più sofisticati:
 ---
 
 ## Licenza
-Da definire (consigliata: **MIT** o **Apache 2.0** per favorire collaborazione e adozione).  
+Da definire (consigliata: **MIT** o **Apache 2.0** per favorire collaborazione e adozione).
+
+## World Intelligence System
+
+PREACT's product North Star is now a **globe-first World Intelligence System**.
+
+The forecasting engine remains a specialist analytical layer, while the primary product experience becomes an interactive political, historical, geographic and sociological atlas built on a temporal world knowledge graph.
+
+The target experience is:
+
+```text
+3D WORLD
+  -> select country
+  -> current political system and government
+  -> deep history and twentieth-century timeline
+  -> society/economy
+  -> alliances, cooperation, disputes, sanctions and conflicts
+  -> inspect evidence and change history
+  -> optionally open PREACT forecasts/scenarios as a separate layer
+```
+
+World Knowledge is designed to update autonomously from continuously collected sources. New information enters as a candidate claim, is corroborated under a fail-closed policy, and only then may append a new version of factual world state. Superseded facts are closed in valid time rather than overwritten. Material factual changes queue affected narrative sections for regeneration.
+
+The complete product and milestone plan is in [docs/world_intelligence_roadmap.md](docs/world_intelligence_roadmap.md).
+
+The architectural invariant is:
+
+```text
+OBSERVED WORLD != INTERPRETATION != FORECAST != COUNTERFACTUAL
+```
