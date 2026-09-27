@@ -268,17 +268,22 @@ class WorldKnowledgeStore:
             base = conn.execute(
                 """
                 SELECT entity_id,field,value_json,valid_from,domain,kind,attributes_json,
-                       MAX(confidence) AS confidence
+                       confidence
                 FROM world_knowledge_candidates
                 WHERE claim_key=?
-                GROUP BY entity_id,field,value_json,valid_from,domain,kind,attributes_json
-                ORDER BY valid_from DESC
+                ORDER BY detected_at DESC, created_at DESC
                 LIMIT 1
                 """,
                 [claim_key],
             ).fetchone()
             if base is None:
                 raise KeyError(f"Unknown world knowledge claim: {claim_key}")
+            max_confidence = float(
+                conn.execute(
+                    "SELECT MAX(confidence) FROM world_knowledge_candidates WHERE claim_key=?",
+                    [claim_key],
+                ).fetchone()[0]
+            )
 
             rows = conn.execute(
                 """
@@ -312,7 +317,7 @@ class WorldKnowledgeStore:
             detected_at=detected_at,
             domain=KnowledgeDomain(str(base[4])),
             kind=KnowledgeUpdateKind(str(base[5])),
-            confidence=float(base[7]),
+            confidence=max_confidence,
             evidence=evidence,
             attributes=json.loads(base[6]) if base[6] else {},
             candidate_id=claim_key,
@@ -428,7 +433,7 @@ class WorldKnowledgeStore:
         inserted = 0
         with self.connect() as conn:
             for event in events:
-                cursor = conn.execute(
+                row = conn.execute(
                     """
                     INSERT OR IGNORE INTO world_event_observations(
                         observation_id,provider,provider_event_id,event_time,known_at,
@@ -437,6 +442,7 @@ class WorldKnowledgeStore:
                         num_sources,num_articles,actor1_name,actor2_name,
                         action_location,source_url,snapshot_checksum,evidence_class
                     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    RETURNING observation_id
                     """,
                     [
                         event.observation_id,
@@ -462,8 +468,8 @@ class WorldKnowledgeStore:
                         event.snapshot_checksum,
                         event.evidence_class,
                     ],
-                )
-                inserted += int(bool(cursor.rowcount))
+                ).fetchone()
+                inserted += int(row is not None)
         return inserted
 
     def event_timeline(
