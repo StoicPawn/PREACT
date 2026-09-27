@@ -85,7 +85,12 @@ class KnowledgeUpdateCandidate:
             raise ValueError("detected_at cannot precede valid_from for factual updates")
         object.__setattr__(self, "candidate_id", self.candidate_id or self.fingerprint())
 
-    def fingerprint(self) -> str:
+    def claim_key(self) -> str:
+        """Stable identity of the claim, independent of which source reported it.
+
+        This lets evidence arriving in different 24/7 ingestion cycles accumulate
+        around the same semantic claim before the promotion policy is evaluated.
+        """
         payload = {
             "entity_id": self.entity_id,
             "field": self.field,
@@ -93,10 +98,19 @@ class KnowledgeUpdateCandidate:
             "valid_from": self.valid_from.isoformat(),
             "domain": self.domain.value,
             "kind": self.kind.value,
-            "evidence": sorted((item.source_ref for item in self.evidence)),
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-        return "wkc_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+        return "wkc_claim_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+
+    def fingerprint(self) -> str:
+        """Identity of one observed candidate, including its evidence set."""
+        payload = {
+            "claim_key": self.claim_key(),
+            "evidence": sorted((item.source_ref for item in self.evidence)),
+            "detected_at": self.detected_at.isoformat(),
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return "wkc_obs_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
 
 
 @dataclass(frozen=True)

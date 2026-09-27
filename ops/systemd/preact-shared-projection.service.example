@@ -10,6 +10,8 @@ Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
 Environment=PREACT_HISTORY_DB=/var/lib/preact/history/preact_history.duckdb
 Environment=PREACT_DOCUMENT_DB=/var/lib/preact/history/preact_documents.duckdb
 Environment=PREACT_PROJECTION_LEDGER=/var/lib/preact/history/projection_ledger.sqlite3
+Environment=PREACT_WORLD_KNOWLEDGE_DB=/var/lib/preact/history/world_knowledge.duckdb
+Environment=PREACT_WORLD_LOOKBACK_DAYS=2
 ExecStart=/opt/preact/.venv/bin/python scripts/project_shared_snapshots.py
 NoNewPrivileges=true
 PrivateTmp=true

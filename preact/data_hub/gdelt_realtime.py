@@ -20,6 +20,7 @@ import zipfile
 from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
 
 LASTUPDATE_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+CAMEO_COUNTRY_URL = "https://gdeltproject.org/data/lookups/CAMEO.country.txt"
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,38 @@ class GDELTRealtimeCollector:
         with urlopen(request, timeout=30.0) as response:
             text = response.read().decode("utf-8", errors="replace")
         return parse_lastupdate(text)
+
+    def ensure_country_lookup(self, *, max_age_days: int = 7) -> SnapshotMetadata:
+        """Ensure the shared hub owns a recent CAMEO country-code lookup snapshot."""
+        if max_age_days < 1:
+            raise ValueError("max_age_days must be >= 1")
+
+        existing = [
+            item
+            for item in self.snapshot_store.iter_metadata(source_id="gdelt")
+            if item.source_release == "GDELT CAMEO country lookup"
+        ]
+        if existing:
+            latest = existing[-1]
+            age = datetime.now(timezone.utc) - latest.retrieved_at
+            if age.total_seconds() <= max_age_days * 86400:
+                return latest
+
+        request = Request(CAMEO_COUNTRY_URL, headers={"User-Agent": self.user_agent})
+        with urlopen(request, timeout=30.0) as response:
+            payload = response.read()
+            content_type = response.headers.get("Content-Type")
+
+        return self.snapshot_store.put(
+            source_id="gdelt",
+            payload=payload,
+            retrieved_at=datetime.now(timezone.utc),
+            source_url=CAMEO_COUNTRY_URL,
+            source_release="GDELT CAMEO country lookup",
+            content_type=content_type,
+            operation="reference_cameo_country",
+            notes="Shared reference snapshot used by all internal GDELT consumers.",
+        )
 
     def collect_latest(
         self,

@@ -9,10 +9,14 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import duckdb
 
+from preact.intelligence.world_events import WorldEventObservation
 from preact.intelligence.world_knowledge import (
+    KnowledgeDomain,
     KnowledgeUpdateCandidate,
+    KnowledgeUpdateKind,
     PromotionAction,
     PromotionDecision,
+    SourceEvidence,
     affected_narrative_sections,
 )
 
@@ -32,6 +36,7 @@ class WorldKnowledgeStore:
                 """
                 CREATE TABLE IF NOT EXISTS world_knowledge_candidates (
                     candidate_id VARCHAR PRIMARY KEY,
+                    claim_key VARCHAR,
                     entity_id VARCHAR NOT NULL,
                     field VARCHAR NOT NULL,
                     value_json VARCHAR NOT NULL,
@@ -45,6 +50,31 @@ class WorldKnowledgeStore:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
                 )
                 """
+            )
+            conn.execute(
+                "ALTER TABLE world_knowledge_candidates ADD COLUMN IF NOT EXISTS claim_key VARCHAR"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS world_knowledge_evidence (
+                    evidence_id VARCHAR PRIMARY KEY,
+                    claim_key VARCHAR NOT NULL,
+                    candidate_id VARCHAR NOT NULL,
+                    source VARCHAR NOT NULL,
+                    source_ref VARCHAR NOT NULL,
+                    published_at TIMESTAMPTZ NOT NULL,
+                    retrieved_at TIMESTAMPTZ NOT NULL,
+                    independent_group VARCHAR NOT NULL,
+                    authoritative BOOLEAN NOT NULL,
+                    excerpt_hash VARCHAR,
+                    observed_confidence DOUBLE NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_evidence_claim "
+                "ON world_knowledge_evidence(claim_key, retrieved_at)"
             )
             conn.execute(
                 """
@@ -80,6 +110,47 @@ class WorldKnowledgeStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS world_event_observations (
+                    observation_id VARCHAR PRIMARY KEY,
+                    provider VARCHAR NOT NULL,
+                    provider_event_id VARCHAR NOT NULL,
+                    event_time TIMESTAMPTZ NOT NULL,
+                    known_at TIMESTAMPTZ NOT NULL,
+                    actor1_entity_id VARCHAR NOT NULL,
+                    actor2_entity_id VARCHAR,
+                    event_code VARCHAR,
+                    event_base_code VARCHAR,
+                    event_root_code VARCHAR,
+                    quad_class INTEGER,
+                    goldstein DOUBLE,
+                    tone DOUBLE,
+                    num_mentions DOUBLE,
+                    num_sources DOUBLE,
+                    num_articles DOUBLE,
+                    actor1_name VARCHAR,
+                    actor2_name VARCHAR,
+                    action_location VARCHAR,
+                    source_url VARCHAR,
+                    snapshot_checksum VARCHAR,
+                    evidence_class VARCHAR NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_actor1 "
+                "ON world_event_observations(actor1_entity_id, event_time, known_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_actor2 "
+                "ON world_event_observations(actor2_entity_id, event_time, known_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_event_provider "
+                "ON world_event_observations(provider, provider_event_id, known_at)"
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS world_narrative_jobs (
                     job_id VARCHAR PRIMARY KEY,
                     candidate_id VARCHAR NOT NULL,
@@ -112,35 +183,145 @@ class WorldKnowledgeStore:
             for item in candidate.evidence
         ]
 
+    @staticmethod
+    def _evidence_id(claim_key: str, evidence: SourceEvidence) -> str:
+        material = "|".join(
+            [
+                claim_key,
+                evidence.source.strip(),
+                evidence.source_ref.strip(),
+                evidence.published_at.isoformat(),
+                evidence.independent_group.strip(),
+            ]
+        )
+        import hashlib
+        return "wke_" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
     def record_candidate(self, candidate: KnowledgeUpdateCandidate) -> bool:
+        """Persist one observed candidate and its immutable evidence rows."""
+        claim_key = candidate.claim_key()
+        inserted = False
         with self.connect() as conn:
-            if conn.execute(
+            if not conn.execute(
                 "SELECT 1 FROM world_knowledge_candidates WHERE candidate_id = ?",
                 [candidate.candidate_id],
             ).fetchone():
-                return False
+                conn.execute(
+                    """
+                    INSERT INTO world_knowledge_candidates(
+                        candidate_id,claim_key,entity_id,field,value_json,valid_from,detected_at,
+                        domain,kind,confidence,evidence_json,attributes_json
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        candidate.candidate_id,
+                        claim_key,
+                        candidate.entity_id,
+                        candidate.field,
+                        json.dumps(candidate.value, ensure_ascii=False, sort_keys=True, default=str),
+                        candidate.valid_from,
+                        candidate.detected_at,
+                        candidate.domain.value,
+                        candidate.kind.value,
+                        float(candidate.confidence),
+                        json.dumps(self._evidence_payload(candidate), ensure_ascii=False, sort_keys=True),
+                        json.dumps(dict(candidate.attributes), ensure_ascii=False, sort_keys=True, default=str),
+                    ],
+                )
+                inserted = True
+
+            # Backfill claim_key for databases created by the first World Knowledge version.
             conn.execute(
-                """
-                INSERT INTO world_knowledge_candidates(
-                    candidate_id,entity_id,field,value_json,valid_from,detected_at,
-                    domain,kind,confidence,evidence_json,attributes_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                [
-                    candidate.candidate_id,
-                    candidate.entity_id,
-                    candidate.field,
-                    json.dumps(candidate.value, ensure_ascii=False, sort_keys=True, default=str),
-                    candidate.valid_from,
-                    candidate.detected_at,
-                    candidate.domain.value,
-                    candidate.kind.value,
-                    float(candidate.confidence),
-                    json.dumps(self._evidence_payload(candidate), ensure_ascii=False, sort_keys=True),
-                    json.dumps(dict(candidate.attributes), ensure_ascii=False, sort_keys=True, default=str),
-                ],
+                "UPDATE world_knowledge_candidates SET claim_key=? "
+                "WHERE candidate_id=? AND (claim_key IS NULL OR claim_key='')",
+                [claim_key, candidate.candidate_id],
             )
-        return True
+
+            for item in candidate.evidence:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO world_knowledge_evidence(
+                        evidence_id,claim_key,candidate_id,source,source_ref,published_at,
+                        retrieved_at,independent_group,authoritative,excerpt_hash,
+                        observed_confidence
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        self._evidence_id(claim_key, item),
+                        claim_key,
+                        candidate.candidate_id,
+                        item.source,
+                        item.source_ref,
+                        item.published_at,
+                        item.retrieved_at,
+                        item.independent_group,
+                        bool(item.authoritative),
+                        item.excerpt_hash,
+                        float(candidate.confidence),
+                    ],
+                )
+        return inserted
+
+    def aggregate_claim(self, claim_key: str) -> KnowledgeUpdateCandidate:
+        """Materialize the corroborated view of one claim across ingestion cycles."""
+        with self.connect() as conn:
+            base = conn.execute(
+                """
+                SELECT entity_id,field,value_json,valid_from,domain,kind,attributes_json,
+                       confidence
+                FROM world_knowledge_candidates
+                WHERE claim_key=?
+                ORDER BY detected_at DESC, created_at DESC
+                LIMIT 1
+                """,
+                [claim_key],
+            ).fetchone()
+            if base is None:
+                raise KeyError(f"Unknown world knowledge claim: {claim_key}")
+            max_confidence = float(
+                conn.execute(
+                    "SELECT MAX(confidence) FROM world_knowledge_candidates WHERE claim_key=?",
+                    [claim_key],
+                ).fetchone()[0]
+            )
+
+            rows = conn.execute(
+                """
+                SELECT source,source_ref,published_at,retrieved_at,independent_group,
+                       authoritative,excerpt_hash
+                FROM world_knowledge_evidence
+                WHERE claim_key=?
+                ORDER BY retrieved_at,source_ref
+                """,
+                [claim_key],
+            ).fetchall()
+
+        evidence = tuple(
+            SourceEvidence(
+                source=str(row[0]),
+                source_ref=str(row[1]),
+                published_at=row[2],
+                retrieved_at=row[3],
+                independent_group=str(row[4]),
+                authoritative=bool(row[5]),
+                excerpt_hash=row[6],
+            )
+            for row in rows
+        )
+        detected_at = max((item.retrieved_at for item in evidence), default=base[3])
+        return KnowledgeUpdateCandidate(
+            entity_id=str(base[0]),
+            field=str(base[1]),
+            value=json.loads(base[2]),
+            valid_from=base[3],
+            detected_at=detected_at,
+            domain=KnowledgeDomain(str(base[4])),
+            kind=KnowledgeUpdateKind(str(base[5])),
+            confidence=max_confidence,
+            evidence=evidence,
+            attributes=json.loads(base[6]) if base[6] else {},
+            candidate_id=claim_key,
+        )
 
     def record_decision(self, decision: PromotionDecision) -> None:
         with self.connect() as conn:
@@ -243,6 +424,100 @@ class WorldKnowledgeStore:
 
         return assertion_id
 
+    def record_world_events(self, events: Iterable[WorldEventObservation]) -> int:
+        """Persist immutable provider-event observations.
+
+        Repeated snapshots of the same provider event are preserved as separate
+        observations when their knowledge time or snapshot checksum differs.
+        """
+        inserted = 0
+        with self.connect() as conn:
+            for event in events:
+                if conn.execute(
+                    "SELECT 1 FROM world_event_observations WHERE observation_id=?",
+                    [event.observation_id],
+                ).fetchone():
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO world_event_observations(
+                        observation_id,provider,provider_event_id,event_time,known_at,
+                        actor1_entity_id,actor2_entity_id,event_code,event_base_code,
+                        event_root_code,quad_class,goldstein,tone,num_mentions,
+                        num_sources,num_articles,actor1_name,actor2_name,
+                        action_location,source_url,snapshot_checksum,evidence_class
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        event.observation_id,
+                        event.provider,
+                        event.provider_event_id,
+                        event.event_time,
+                        event.known_at,
+                        event.actor1_entity_id,
+                        event.actor2_entity_id,
+                        event.event_code,
+                        event.event_base_code,
+                        event.event_root_code,
+                        event.quad_class,
+                        event.goldstein,
+                        event.tone,
+                        event.num_mentions,
+                        event.num_sources,
+                        event.num_articles,
+                        event.actor1_name,
+                        event.actor2_name,
+                        event.action_location,
+                        event.source_url,
+                        event.snapshot_checksum,
+                        event.evidence_class,
+                    ],
+                )
+                inserted += 1
+        return inserted
+
+    def event_timeline(
+        self,
+        entity_id: str,
+        *,
+        as_of: datetime,
+        known_cutoff: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return one latest-known observation per provider event at a cutoff."""
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        cutoff = known_cutoff or as_of
+
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY provider, provider_event_id
+                               ORDER BY known_at DESC, created_at DESC
+                           ) AS rn
+                    FROM world_event_observations
+                    WHERE event_time <= ?
+                      AND known_at <= ?
+                      AND (actor1_entity_id = ? OR actor2_entity_id = ?)
+                )
+                SELECT observation_id,provider,provider_event_id,event_time,known_at,
+                       actor1_entity_id,actor2_entity_id,event_code,event_base_code,
+                       event_root_code,quad_class,goldstein,tone,num_mentions,
+                       num_sources,num_articles,actor1_name,actor2_name,
+                       action_location,source_url,snapshot_checksum,evidence_class
+                FROM ranked
+                WHERE rn=1
+                ORDER BY event_time DESC, known_at DESC
+                LIMIT ?
+                """,
+                [as_of, cutoff, entity_id, entity_id, int(limit)],
+            )
+            columns = [item[0] for item in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def current_state(self, entity_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             rows = conn.execute(
@@ -306,6 +581,18 @@ class WorldKnowledgeStore:
                     "SELECT COUNT(*) FROM world_knowledge_assertions WHERE valid_to IS NULL"
                 ).fetchone()[0]
             )
+            evidence_observations = int(
+                conn.execute("SELECT COUNT(*) FROM world_knowledge_evidence").fetchone()[0]
+            )
+            event_observations = int(
+                conn.execute("SELECT COUNT(*) FROM world_event_observations").fetchone()[0]
+            )
+            distinct_claims = int(
+                conn.execute(
+                    "SELECT COUNT(DISTINCT claim_key) FROM world_knowledge_candidates "
+                    "WHERE claim_key IS NOT NULL"
+                ).fetchone()[0]
+            )
             narrative_jobs = int(
                 conn.execute(
                     "SELECT COUNT(*) FROM world_narrative_jobs WHERE status='queued'"
@@ -313,6 +600,9 @@ class WorldKnowledgeStore:
             )
         return {
             "candidates": candidates,
+            "distinct_claims": distinct_claims,
+            "evidence_observations": evidence_observations,
+            "event_observations": event_observations,
             "decisions": decisions,
             "assertions": assertions,
             "current_assertions": current_assertions,
