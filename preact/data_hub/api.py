@@ -11,6 +11,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from .gateway import SharedProviderGateway
 from .gdelt import gdelt_doc_articles
 from .google_news import google_news_search
+from .wikidata import fetch_country_references
 from .news_store import SharedNewsStore
 from preact.history.connectors.world_bank import WorldBankIndicatorConnector
 from preact.history.source_catalog import SOURCE_BY_ID, SOURCES
@@ -181,6 +182,39 @@ def google_news_rss(
         "snapshot_checksum": result.snapshot_checksum,
         "articles": result.payload.get("articles", []),
     }
+
+@app.get("/v1/wikidata/countries")
+def wikidata_countries(
+    ttl_seconds: int = Query(7200, ge=0, le=86400),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorize(authorization)
+    references, response = fetch_country_references(
+        gateway,
+        ttl_seconds=ttl_seconds,
+    )
+    return {
+        "source": "wikidata",
+        "cached": response.cached,
+        "retrieved_at": response.retrieved_at.isoformat(),
+        "snapshot_checksum": response.snapshot_checksum,
+        "countries": [
+            {
+                "iso3": item.iso3,
+                "qid": item.qid,
+                "country_label": item.country_label,
+                "capital": list(item.capital),
+                "government_forms": list(item.government_forms),
+                "heads_of_state": list(item.heads_of_state),
+                "heads_of_government": list(item.heads_of_government),
+                "official_languages": list(item.official_languages),
+                "official_websites": list(item.official_websites),
+                "source_ref": item.source_ref,
+            }
+            for item in references
+        ],
+    }
+
 
 @app.get("/v1/world-bank/indicator")
 def world_bank_indicator(
