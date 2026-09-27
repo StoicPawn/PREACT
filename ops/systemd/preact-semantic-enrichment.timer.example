@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PREACT semantic geopolitical review nightly
+
+[Timer]
+OnCalendar=*-*-* 02:35:00
+Persistent=true
+RandomizedDelaySec=180
+Unit=preact-semantic-enrichment.service
+
+[Install]
+WantedBy=timers.target

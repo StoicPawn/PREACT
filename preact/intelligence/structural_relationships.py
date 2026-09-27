@@ -20,6 +20,10 @@ from preact.history.connectors.cow import COWStateSystemConnector
 from preact.history.graph_store import HistoricalGraphStore
 from preact.history.schema import KnowledgeMode
 from preact.history.snapshot_store import SnapshotMetadata, SourceSnapshotStore
+from preact.intelligence.nato_relationships import (
+    current_nato_alliance_pairs,
+    latest_nato_membership,
+)
 
 
 @dataclass(frozen=True)
@@ -194,6 +198,42 @@ def load_documented_allies(
             }
         )
 
+    nato_membership = latest_nato_membership(
+        root,
+        knowledge_cutoff=cutoff,
+    )
+    if nato_membership is not None:
+        current_member_codes = {
+            member.iso3
+            for member in nato_membership.members
+            if member.joined_year <= world_time.year
+        }
+        if focal in current_member_codes:
+            for counterpart in sorted(current_member_codes - {focal}):
+                allies.add(counterpart)
+                records.append(
+                    {
+                        "counterpart_iso3": counterpart,
+                        "relation_type": "formal_alliance",
+                        "source": "nato",
+                        "source_ref": nato_membership.snapshot.source_url,
+                        "dataset_version": nato_membership.snapshot.source_release,
+                        "valid_from": datetime(
+                            next(
+                                member.joined_year
+                                for member in nato_membership.members
+                                if member.iso3 == counterpart
+                            ),
+                            1,
+                            1,
+                            tzinfo=timezone.utc,
+                        ),
+                        "valid_to": None,
+                        "known_at": nato_membership.snapshot.retrieved_at,
+                        "retrieved_at": nato_membership.snapshot.retrieved_at,
+                    }
+                )
+
     evidence = pd.DataFrame.from_records(records)
     status = "ok" if records else (
         "mapping_unavailable"
@@ -218,4 +258,58 @@ def load_documented_allies(
     )
 
 
-__all__ = ["StructuralRelationshipBatch", "load_documented_allies"]
+def load_documented_alliance_pairs(
+    root: str | Path,
+    *,
+    graph_path: str | Path = "data/history/preact_graph.duckdb",
+    valid_at: datetime | pd.Timestamp | None = None,
+    knowledge_cutoff: datetime | pd.Timestamp | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Return all active formal-alliance pair anchors for state estimation."""
+
+    world_time = _utc(valid_at)
+    cutoff = _utc(knowledge_cutoff)
+    graph_file = Path(graph_path)
+    if not graph_file.exists():
+        return {}
+
+    store = SourceSnapshotStore(Path(root) / "snapshots")
+    cow_map, _mapping_snapshot = _cow_ccode_map(
+        store,
+        valid_at=world_time,
+        knowledge_cutoff=cutoff,
+    )
+    relations = HistoricalGraphStore(graph_file).as_of(
+        cutoff=cutoff,
+        valid_at=world_time,
+        relation_type="formal_alliance",
+        knowledge_mode=KnowledgeMode.STRICT_AS_KNOWN,
+    )
+
+    pairs: dict[str, set[str]] = {}
+    for relation in relations:
+        subject = _resolve_entity_id(relation["subject_entity_id"], cow_map)
+        object_ = _resolve_entity_id(relation["object_entity_id"], cow_map)
+        if subject is None or object_ is None or subject == object_:
+            continue
+        left, right = sorted((subject, object_))
+        pairs.setdefault(f"{left}|{right}", set()).add("formal_alliance")
+    nato_pairs, _nato_membership = current_nato_alliance_pairs(
+        root,
+        valid_at=world_time,
+        knowledge_cutoff=cutoff,
+    )
+    for pair_key, labels in nato_pairs.items():
+        pairs.setdefault(pair_key, set()).update(labels)
+
+    return {
+        key: tuple(sorted(values))
+        for key, values in sorted(pairs.items())
+    }
+
+
+__all__ = [
+    "StructuralRelationshipBatch",
+    "load_documented_alliance_pairs",
+    "load_documented_allies",
+]

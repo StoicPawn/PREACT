@@ -3,6 +3,7 @@ import io
 import zipfile
 
 from preact.history.snapshot_store import SourceSnapshotStore
+from preact.history.world_knowledge_store import WorldKnowledgeStore
 from preact.intelligence.gdelt_context import load_recent_gdelt_context
 from preact.intelligence.gdelt_ingest import _GKG_COLUMNS, _MENTION_COLUMNS
 
@@ -72,3 +73,38 @@ def test_context_consumer_uses_shared_snapshots_without_network(tmp_path):
     assert batch.mention_observations[0]["distinct_source_count"] == 1
     assert batch.gkg_documents[0]["country_iso3"] == ["FRA", "ITA"]
     assert "DIPLOMACY" in batch.gkg_documents[0]["themes"]
+    assert len(batch.processed_snapshots) == 2
+
+    world = WorldKnowledgeStore(tmp_path / "world.duckdb")
+    persisted = world.record_gdelt_context(
+        mention_observations=batch.mention_observations,
+        gkg_documents=batch.gkg_documents,
+        processed_snapshots=batch.processed_snapshots,
+    )
+    assert persisted["inserted_mentions"] == 1
+    assert persisted["inserted_gkg_documents"] == 1
+    assert persisted["marked_snapshots"] == 2
+
+    country_context = world.gkg_context_for_country(
+        "country:ITA",
+        as_of=utc(11),
+        known_cutoff=utc(11),
+    )
+    assert len(country_context) == 1
+    assert country_context[0]["country_iso3"] == ["FRA", "ITA"]
+
+    second = load_recent_gdelt_context(
+        tmp_path,
+        as_of=utc(11),
+        lookback_days=1,
+        skip_snapshot_checksums=world.processed_gdelt_context_snapshots(),
+    )
+    assert second.mention_snapshot_count == 0
+    assert second.gkg_snapshot_count == 0
+
+
+def test_gkg_fips_override_beats_conflicting_iso2_code():
+    from preact.intelligence.gdelt_context import _resolve_gkg_country_code
+
+    assert _resolve_gkg_country_code("GM", None) == "DEU"
+    assert _resolve_gkg_country_code("UK", None) == "GBR"

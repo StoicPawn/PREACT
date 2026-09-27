@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh PREACT canonical geopolitical state hourly
+
+[Timer]
+OnCalendar=*-*-* *:25:00
+Persistent=true
+RandomizedDelaySec=30
+Unit=preact-geopolitical-canonical.service
+
+[Install]
+WantedBy=timers.target

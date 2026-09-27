@@ -129,6 +129,15 @@ class WorldKnowledgeStore:
                     num_articles DOUBLE,
                     actor1_name VARCHAR,
                     actor2_name VARCHAR,
+                    actor1_code VARCHAR,
+                    actor2_code VARCHAR,
+                    actor1_type1_code VARCHAR,
+                    actor1_type2_code VARCHAR,
+                    actor1_type3_code VARCHAR,
+                    actor2_type1_code VARCHAR,
+                    actor2_type2_code VARCHAR,
+                    actor2_type3_code VARCHAR,
+                    is_root_event BOOLEAN,
                     action_location VARCHAR,
                     source_url VARCHAR,
                     snapshot_checksum VARCHAR,
@@ -137,6 +146,21 @@ class WorldKnowledgeStore:
                 )
                 """
             )
+            for column_sql in (
+                "actor1_code VARCHAR",
+                "actor2_code VARCHAR",
+                "actor1_type1_code VARCHAR",
+                "actor1_type2_code VARCHAR",
+                "actor1_type3_code VARCHAR",
+                "actor2_type1_code VARCHAR",
+                "actor2_type2_code VARCHAR",
+                "actor2_type3_code VARCHAR",
+                "is_root_event BOOLEAN",
+            ):
+                conn.execute(
+                    "ALTER TABLE world_event_observations ADD COLUMN IF NOT EXISTS "
+                    + column_sql
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_world_event_actor1 "
                 "ON world_event_observations(actor1_entity_id, event_time, known_at)"
@@ -148,6 +172,66 @@ class WorldKnowledgeStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_world_event_provider "
                 "ON world_event_observations(provider, provider_event_id, known_at)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS world_event_mentions (
+                    observation_id VARCHAR PRIMARY KEY,
+                    provider_event_id VARCHAR NOT NULL,
+                    known_at TIMESTAMPTZ NOT NULL,
+                    mention_count INTEGER NOT NULL,
+                    distinct_source_count INTEGER NOT NULL,
+                    mention_sources_json VARCHAR NOT NULL,
+                    mean_confidence DOUBLE,
+                    max_confidence DOUBLE,
+                    mean_document_tone DOUBLE,
+                    latest_mention_time VARCHAR,
+                    snapshot_checksum VARCHAR NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_mentions_event "
+                "ON world_event_mentions(provider_event_id, known_at)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS world_gkg_documents (
+                    observation_id VARCHAR PRIMARY KEY,
+                    gkg_record_id VARCHAR NOT NULL,
+                    known_at TIMESTAMPTZ NOT NULL,
+                    source VARCHAR,
+                    document_url VARCHAR NOT NULL,
+                    country_iso3_json VARCHAR NOT NULL,
+                    provider_country_codes_json VARCHAR NOT NULL,
+                    themes_json VARCHAR NOT NULL,
+                    persons_json VARCHAR NOT NULL,
+                    organizations_json VARCHAR NOT NULL,
+                    overall_tone DOUBLE,
+                    all_names_json VARCHAR NOT NULL,
+                    snapshot_checksum VARCHAR NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
+            )
+            conn.execute(
+                "ALTER TABLE world_gkg_documents ADD COLUMN IF NOT EXISTS "
+                "country_mapping_checksum VARCHAR"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_world_gkg_known "
+                "ON world_gkg_documents(known_at)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS world_gdelt_snapshot_projection (
+                    snapshot_checksum VARCHAR PRIMARY KEY,
+                    operation VARCHAR NOT NULL,
+                    retrieved_at TIMESTAMPTZ NOT NULL,
+                    processed_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+                )
+                """
             )
             conn.execute(
                 """
@@ -607,6 +691,33 @@ class WorldKnowledgeStore:
                     "SELECT 1 FROM world_event_observations WHERE observation_id=?",
                     [event.observation_id],
                 ).fetchone():
+                    conn.execute(
+                        """
+                        UPDATE world_event_observations
+                        SET actor1_code=COALESCE(actor1_code,?),
+                            actor2_code=COALESCE(actor2_code,?),
+                            actor1_type1_code=COALESCE(actor1_type1_code,?),
+                            actor1_type2_code=COALESCE(actor1_type2_code,?),
+                            actor1_type3_code=COALESCE(actor1_type3_code,?),
+                            actor2_type1_code=COALESCE(actor2_type1_code,?),
+                            actor2_type2_code=COALESCE(actor2_type2_code,?),
+                            actor2_type3_code=COALESCE(actor2_type3_code,?),
+                            is_root_event=COALESCE(is_root_event,?)
+                        WHERE observation_id=?
+                        """,
+                        [
+                            event.actor1_code,
+                            event.actor2_code,
+                            event.actor1_type1_code,
+                            event.actor1_type2_code,
+                            event.actor1_type3_code,
+                            event.actor2_type1_code,
+                            event.actor2_type2_code,
+                            event.actor2_type3_code,
+                            event.is_root_event,
+                            event.observation_id,
+                        ],
+                    )
                     continue
                 conn.execute(
                     """
@@ -615,8 +726,12 @@ class WorldKnowledgeStore:
                         actor1_entity_id,actor2_entity_id,event_code,event_base_code,
                         event_root_code,quad_class,goldstein,tone,num_mentions,
                         num_sources,num_articles,actor1_name,actor2_name,
-                        action_location,source_url,snapshot_checksum,evidence_class
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        actor1_code,actor2_code,
+                        actor1_type1_code,actor1_type2_code,actor1_type3_code,
+                        actor2_type1_code,actor2_type2_code,actor2_type3_code,
+                        is_root_event,action_location,source_url,snapshot_checksum,
+                        evidence_class
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     [
                         event.observation_id,
@@ -637,6 +752,15 @@ class WorldKnowledgeStore:
                         event.num_articles,
                         event.actor1_name,
                         event.actor2_name,
+                        event.actor1_code,
+                        event.actor2_code,
+                        event.actor1_type1_code,
+                        event.actor1_type2_code,
+                        event.actor1_type3_code,
+                        event.actor2_type1_code,
+                        event.actor2_type2_code,
+                        event.actor2_type3_code,
+                        event.is_root_event,
                         event.action_location,
                         event.source_url,
                         event.snapshot_checksum,
@@ -645,6 +769,254 @@ class WorldKnowledgeStore:
                 )
                 inserted += 1
         return inserted
+
+    def processed_gdelt_context_snapshots(self) -> set[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT snapshot_checksum FROM world_gdelt_snapshot_projection"
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def record_gdelt_context(
+        self,
+        *,
+        mention_observations: Iterable[Mapping[str, Any]],
+        gkg_documents: Iterable[Mapping[str, Any]],
+        processed_snapshots: Iterable[Mapping[str, Any]],
+    ) -> dict[str, int]:
+        """Persist PREACT evidence derived from externally acquired GDELT snapshots."""
+
+        import hashlib
+
+        inserted_mentions = 0
+        inserted_gkg = 0
+        marked_snapshots = 0
+
+        with self.connect() as conn:
+            for item in mention_observations:
+                event_id = str(item.get("provider_event_id") or "").strip()
+                known_at = item.get("known_at")
+                checksum = str(item.get("snapshot_checksum") or "").strip()
+                if not event_id or known_at is None or not checksum:
+                    continue
+                material = f"{event_id}|{known_at}|{checksum}"
+                observation_id = (
+                    "wem_"
+                    + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+                )
+                if conn.execute(
+                    "SELECT 1 FROM world_event_mentions WHERE observation_id=?",
+                    [observation_id],
+                ).fetchone():
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO world_event_mentions(
+                        observation_id,provider_event_id,known_at,mention_count,
+                        distinct_source_count,mention_sources_json,mean_confidence,
+                        max_confidence,mean_document_tone,latest_mention_time,
+                        snapshot_checksum
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        observation_id,
+                        event_id,
+                        known_at,
+                        int(item.get("mention_count") or 0),
+                        int(item.get("distinct_source_count") or 0),
+                        json.dumps(
+                            list(item.get("mention_sources") or []),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        item.get("mean_confidence"),
+                        item.get("max_confidence"),
+                        item.get("mean_document_tone"),
+                        item.get("latest_mention_time"),
+                        checksum,
+                    ],
+                )
+                inserted_mentions += 1
+
+            for item in gkg_documents:
+                record_id = str(item.get("gkg_record_id") or "").strip()
+                known_at = item.get("known_at")
+                checksum = str(item.get("snapshot_checksum") or "").strip()
+                url = str(item.get("document_url") or "").strip()
+                if not record_id or known_at is None or not checksum or not url:
+                    continue
+                material = f"{record_id}|{known_at}|{checksum}"
+                observation_id = (
+                    "wgk_"
+                    + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+                )
+                country_json = json.dumps(
+                    list(item.get("country_iso3") or []),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                provider_country_json = json.dumps(
+                    list(item.get("country_codes") or []),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                mapping_checksum = str(
+                    item.get("country_mapping_checksum") or ""
+                ).strip() or None
+                existing = conn.execute(
+                    """
+                    SELECT country_iso3_json,country_mapping_checksum
+                    FROM world_gkg_documents WHERE observation_id=?
+                    """,
+                    [observation_id],
+                ).fetchone()
+                if existing:
+                    if (
+                        country_json != (existing[0] or "[]")
+                        or mapping_checksum != existing[1]
+                    ):
+                        conn.execute(
+                            """
+                            UPDATE world_gkg_documents
+                            SET country_iso3_json=?,
+                                provider_country_codes_json=?,
+                                country_mapping_checksum=?
+                            WHERE observation_id=?
+                            """,
+                            [
+                                country_json,
+                                provider_country_json,
+                                mapping_checksum,
+                                observation_id,
+                            ],
+                        )
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO world_gkg_documents(
+                        observation_id,gkg_record_id,known_at,source,document_url,
+                        country_iso3_json,provider_country_codes_json,themes_json,
+                        persons_json,organizations_json,overall_tone,all_names_json,
+                        snapshot_checksum,country_mapping_checksum
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        observation_id,
+                        record_id,
+                        known_at,
+                        str(item.get("source") or "").strip() or None,
+                        url,
+                        country_json,
+                        provider_country_json,
+                        json.dumps(
+                            list(item.get("themes") or []),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            list(item.get("persons") or []),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            list(item.get("organizations") or []),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        item.get("overall_tone"),
+                        json.dumps(
+                            list(item.get("all_names") or []),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        checksum,
+                        mapping_checksum,
+                    ],
+                )
+                inserted_gkg += 1
+
+            for snapshot in processed_snapshots:
+                checksum = str(
+                    snapshot.get("snapshot_checksum") or ""
+                ).strip()
+                operation = str(snapshot.get("operation") or "").strip()
+                retrieved_at = snapshot.get("retrieved_at")
+                if not checksum or not operation or retrieved_at is None:
+                    continue
+                if conn.execute(
+                    """
+                    SELECT 1 FROM world_gdelt_snapshot_projection
+                    WHERE snapshot_checksum=?
+                    """,
+                    [checksum],
+                ).fetchone():
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO world_gdelt_snapshot_projection(
+                        snapshot_checksum,operation,retrieved_at
+                    ) VALUES (?,?,?)
+                    """,
+                    [checksum, operation, retrieved_at],
+                )
+                marked_snapshots += 1
+
+        return {
+            "inserted_mentions": inserted_mentions,
+            "inserted_gkg_documents": inserted_gkg,
+            "marked_snapshots": marked_snapshots,
+        }
+
+    def gkg_context_for_country(
+        self,
+        entity_id: str,
+        *,
+        as_of: datetime,
+        known_cutoff: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return recent GKG context linked to a country at a knowledge cutoff."""
+
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        prefix = "country:"
+        if not entity_id.startswith(prefix):
+            raise ValueError("entity_id must use country:ISO3 format")
+        iso3 = entity_id[len(prefix):].strip().upper()
+        cutoff = known_cutoff or as_of
+        needle = f'%"{iso3}"%'
+
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT observation_id,gkg_record_id,known_at,source,document_url,
+                       country_iso3_json,provider_country_codes_json,themes_json,
+                       persons_json,organizations_json,overall_tone,all_names_json,
+                       snapshot_checksum
+                FROM world_gkg_documents
+                WHERE known_at <= ?
+                  AND known_at <= ?
+                  AND country_iso3_json LIKE ?
+                ORDER BY known_at DESC
+                LIMIT ?
+                """,
+                [as_of, cutoff, needle, int(limit)],
+            )
+            columns = [item[0] for item in cursor.description]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        for row in rows:
+            for key in (
+                "country_iso3_json",
+                "provider_country_codes_json",
+                "themes_json",
+                "persons_json",
+                "organizations_json",
+                "all_names_json",
+            ):
+                decoded_key = key.removesuffix("_json")
+                row[decoded_key] = json.loads(row.pop(key) or "[]")
+        return rows
 
     def event_timeline(
         self,
@@ -672,21 +1044,47 @@ class WorldKnowledgeStore:
                     WHERE event_time <= ?
                       AND known_at <= ?
                       AND (actor1_entity_id = ? OR actor2_entity_id = ?)
+                ),
+                mention_ranked AS (
+                    SELECT *,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY provider_event_id
+                               ORDER BY known_at DESC, created_at DESC
+                           ) AS mrn
+                    FROM world_event_mentions
+                    WHERE known_at <= ?
                 )
-                SELECT observation_id,provider,provider_event_id,event_time,known_at,
-                       actor1_entity_id,actor2_entity_id,event_code,event_base_code,
-                       event_root_code,quad_class,goldstein,tone,num_mentions,
-                       num_sources,num_articles,actor1_name,actor2_name,
-                       action_location,source_url,snapshot_checksum,evidence_class
-                FROM ranked
-                WHERE rn=1
-                ORDER BY event_time DESC, known_at DESC
+                SELECT r.observation_id,r.provider,r.provider_event_id,
+                       r.event_time,r.known_at,r.actor1_entity_id,r.actor2_entity_id,
+                       r.event_code,r.event_base_code,r.event_root_code,r.quad_class,
+                       r.goldstein,r.tone,r.num_mentions,r.num_sources,r.num_articles,
+                       r.actor1_name,r.actor2_name,r.action_location,r.source_url,
+                       r.snapshot_checksum,r.evidence_class,
+                       m.mention_count AS corroborating_mentions,
+                       m.distinct_source_count AS mention_source_count,
+                       m.mean_confidence AS mention_mean_confidence,
+                       m.max_confidence AS mention_max_confidence,
+                       m.mean_document_tone AS mention_document_tone,
+                       m.mention_sources_json
+                FROM ranked r
+                LEFT JOIN mention_ranked m
+                  ON r.provider_event_id=m.provider_event_id
+                 AND m.mrn=1
+                WHERE r.rn=1
+                ORDER BY r.event_time DESC, r.known_at DESC
                 LIMIT ?
                 """,
-                [as_of, cutoff, entity_id, entity_id, int(limit)],
+                [as_of, cutoff, entity_id, entity_id, cutoff, int(limit)],
             )
             columns = [item[0] for item in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        for row in rows:
+            raw_sources = row.pop("mention_sources_json", None)
+            row["mention_sources"] = (
+                json.loads(raw_sources) if raw_sources else []
+            )
+        return rows
 
     def current_state(self, entity_id: str) -> dict[str, Any]:
         with self.connect() as conn:
@@ -784,6 +1182,17 @@ class WorldKnowledgeStore:
             event_observations = int(
                 conn.execute("SELECT COUNT(*) FROM world_event_observations").fetchone()[0]
             )
+            mention_observations = int(
+                conn.execute("SELECT COUNT(*) FROM world_event_mentions").fetchone()[0]
+            )
+            gkg_documents = int(
+                conn.execute("SELECT COUNT(*) FROM world_gkg_documents").fetchone()[0]
+            )
+            gdelt_context_snapshots = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM world_gdelt_snapshot_projection"
+                ).fetchone()[0]
+            )
             distinct_claims = int(
                 conn.execute(
                     "SELECT COUNT(DISTINCT claim_key) FROM world_knowledge_candidates "
@@ -800,6 +1209,9 @@ class WorldKnowledgeStore:
             "distinct_claims": distinct_claims,
             "evidence_observations": evidence_observations,
             "event_observations": event_observations,
+            "mention_observations": mention_observations,
+            "gkg_documents": gkg_documents,
+            "gdelt_context_snapshots": gdelt_context_snapshots,
             "decisions": decisions,
             "assertions": assertions,
             "current_assertions": current_assertions,

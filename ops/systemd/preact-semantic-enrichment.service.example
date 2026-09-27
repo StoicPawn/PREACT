@@ -1,0 +1,17 @@
+[Unit]
+Description=PREACT nightly bounded semantic event review
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=PREACT_WORLD_KNOWLEDGE_DB=/var/lib/preact/history/world_knowledge.duckdb
+Environment=PREACT_SEMANTIC_MODEL=qwen3:1.7b
+Environment=PREACT_SEMANTIC_MAX_EVENTS=40
+Environment=PREACT_SEMANTIC_LOOKBACK_DAYS=3
+ExecStart=/opt/preact/.venv/bin/python scripts/refresh_semantic_event_enrichment.py
+TimeoutStartSec=90m
+NoNewPrivileges=true
+PrivateTmp=true
