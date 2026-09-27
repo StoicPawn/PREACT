@@ -342,88 +342,175 @@ class WorldKnowledgeStore:
                 ],
             )
 
+    def seed_reference_facts(
+        self,
+        candidates: Sequence[KnowledgeUpdateCandidate],
+        *,
+        allowed_sources: Sequence[str] = ("wikidata",),
+    ) -> dict[str, tuple[str, bool]]:
+        """Batch-seed unknown fields from reviewed structured references.
+
+        One DuckDB connection/transaction is used for the whole batch. Existing
+        current assertions are never overwritten.
+        """
+        allowed = {str(item).strip() for item in allowed_sources}
+        results: dict[str, tuple[str, bool]] = {}
+
+        with self.connect() as conn:
+            for candidate in candidates:
+                if candidate.kind is not KnowledgeUpdateKind.FACT:
+                    raise ValueError("Reference seeds must be factual candidates")
+                if not candidate.evidence:
+                    raise ValueError("Reference seeds require evidence")
+                observed_sources = {item.source for item in candidate.evidence}
+                if not observed_sources.issubset(allowed):
+                    raise ValueError("Reference seed contains a non-approved source")
+
+                existing = conn.execute(
+                    """
+                    SELECT assertion_id
+                    FROM world_knowledge_assertions
+                    WHERE entity_id=? AND field=? AND valid_to IS NULL
+                    ORDER BY valid_from DESC LIMIT 1
+                    """,
+                    [candidate.entity_id, candidate.field],
+                ).fetchone()
+                if existing:
+                    results[str(candidate.candidate_id)] = (str(existing[0]), False)
+                    continue
+
+                claim_key = candidate.claim_key()
+                evidence_payload = self._evidence_payload(candidate)
+                value_json = json.dumps(
+                    candidate.value,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+                evidence_json = json.dumps(
+                    evidence_payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                base_attributes = dict(candidate.attributes)
+                candidate_attributes_json = json.dumps(
+                    base_attributes,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO world_knowledge_candidates(
+                        candidate_id,claim_key,entity_id,field,value_json,valid_from,
+                        detected_at,domain,kind,confidence,evidence_json,attributes_json
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        candidate.candidate_id,
+                        claim_key,
+                        candidate.entity_id,
+                        candidate.field,
+                        value_json,
+                        candidate.valid_from,
+                        candidate.detected_at,
+                        candidate.domain.value,
+                        candidate.kind.value,
+                        float(candidate.confidence),
+                        evidence_json,
+                        candidate_attributes_json,
+                    ],
+                )
+
+                for item in candidate.evidence:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO world_knowledge_evidence(
+                            evidence_id,claim_key,candidate_id,source,source_ref,
+                            published_at,retrieved_at,independent_group,authoritative,
+                            excerpt_hash,observed_confidence
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        [
+                            self._evidence_id(claim_key, item),
+                            claim_key,
+                            candidate.candidate_id,
+                            item.source,
+                            item.source_ref,
+                            item.published_at,
+                            item.retrieved_at,
+                            item.independent_group,
+                            bool(item.authoritative),
+                            item.excerpt_hash,
+                            float(candidate.confidence),
+                        ],
+                    )
+
+                assertion_id = "wka_seed_" + claim_key.rsplit("_", 1)[-1]
+                assertion_attributes = dict(base_attributes)
+                assertion_attributes["promotion_mode"] = "reference_seed"
+                assertion_attributes_json = json.dumps(
+                    assertion_attributes,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO world_knowledge_assertions(
+                        assertion_id,candidate_id,entity_id,field,value_json,
+                        valid_from,valid_to,known_at,domain,confidence,
+                        evidence_json,attributes_json
+                    ) VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?)
+                    """,
+                    [
+                        assertion_id,
+                        candidate.candidate_id,
+                        candidate.entity_id,
+                        candidate.field,
+                        value_json,
+                        candidate.valid_from,
+                        candidate.detected_at,
+                        candidate.domain.value,
+                        float(candidate.confidence),
+                        evidence_json,
+                        assertion_attributes_json,
+                    ],
+                )
+
+                for section in affected_narrative_sections(candidate):
+                    job_id = f"wnj_{candidate.candidate_id}_{section}"
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO world_narrative_jobs(
+                            job_id,candidate_id,entity_id,section,reason,status
+                        ) VALUES (?,?,?,?,?,?)
+                        """,
+                        [
+                            job_id,
+                            candidate.candidate_id,
+                            candidate.entity_id,
+                            section,
+                            f"Reference baseline seeded: {candidate.field}",
+                            "queued",
+                        ],
+                    )
+                results[str(candidate.candidate_id)] = (assertion_id, True)
+
+        return results
+
     def seed_reference_fact(
         self,
         candidate: KnowledgeUpdateCandidate,
         *,
         allowed_sources: Sequence[str] = ("wikidata",),
     ) -> tuple[str, bool]:
-        """Seed an unknown field from a reviewed structured reference.
-
-        This is intentionally bootstrap-only: it never overwrites an existing
-        current assertion. Later changes must pass the normal corroboration path.
-        """
-        if candidate.kind is not KnowledgeUpdateKind.FACT:
-            raise ValueError("Reference seeds must be factual candidates")
-        if not candidate.evidence:
-            raise ValueError("Reference seeds require evidence")
-        allowed = {str(item).strip() for item in allowed_sources}
-        observed_sources = {item.source for item in candidate.evidence}
-        if not observed_sources.issubset(allowed):
-            raise ValueError("Reference seed contains a non-approved source")
-
-        with self.connect() as conn:
-            existing = conn.execute(
-                """
-                SELECT assertion_id
-                FROM world_knowledge_assertions
-                WHERE entity_id=? AND field=? AND valid_to IS NULL
-                ORDER BY valid_from DESC LIMIT 1
-                """,
-                [candidate.entity_id, candidate.field],
-            ).fetchone()
-            if existing:
-                return str(existing[0]), False
-
-        self.record_candidate(candidate)
-        assertion_id = "wka_seed_" + candidate.claim_key().rsplit("_", 1)[-1]
-        value_json = json.dumps(candidate.value, ensure_ascii=False, sort_keys=True, default=str)
-        evidence_json = json.dumps(self._evidence_payload(candidate), ensure_ascii=False, sort_keys=True)
-        attributes = dict(candidate.attributes)
-        attributes["promotion_mode"] = "reference_seed"
-        attributes_json = json.dumps(attributes, ensure_ascii=False, sort_keys=True, default=str)
-
-        with self.connect() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO world_knowledge_assertions(
-                    assertion_id,candidate_id,entity_id,field,value_json,
-                    valid_from,valid_to,known_at,domain,confidence,
-                    evidence_json,attributes_json
-                ) VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?)
-                """,
-                [
-                    assertion_id,
-                    candidate.candidate_id,
-                    candidate.entity_id,
-                    candidate.field,
-                    value_json,
-                    candidate.valid_from,
-                    candidate.detected_at,
-                    candidate.domain.value,
-                    float(candidate.confidence),
-                    evidence_json,
-                    attributes_json,
-                ],
-            )
-            for section in affected_narrative_sections(candidate):
-                job_id = f"wnj_{candidate.candidate_id}_{section}"
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO world_narrative_jobs(
-                        job_id,candidate_id,entity_id,section,reason,status
-                    ) VALUES (?,?,?,?,?,?)
-                    """,
-                    [
-                        job_id,
-                        candidate.candidate_id,
-                        candidate.entity_id,
-                        section,
-                        f"Reference baseline seeded: {candidate.field}",
-                        "queued",
-                    ],
-                )
-        return assertion_id, True
+        """Backward-compatible single-reference seed wrapper."""
+        return self.seed_reference_facts(
+            [candidate],
+            allowed_sources=allowed_sources,
+        )[str(candidate.candidate_id)]
 
     def promote_fact(
         self,
