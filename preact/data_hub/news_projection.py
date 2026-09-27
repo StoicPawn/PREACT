@@ -106,6 +106,9 @@ class SharedNewsProjector:
                 totals["snapshots_examined"] += 1
                 totals["inserted_articles"] += result["articles"]
                 totals["inserted_observations"] += result["observations"]
+        backfill = self.news.backfill_country_mentions()
+        totals["entity_resolution_processed"] = backfill["processed_observations"]
+        totals["entity_mentions_inserted"] = backfill["inserted_mentions"]
         return totals
 
 
