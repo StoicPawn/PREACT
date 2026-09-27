@@ -522,7 +522,8 @@ class WorldKnowledgeStore:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT field,value_json,valid_from,known_at,domain,confidence,assertion_id
+                SELECT field,value_json,valid_from,known_at,domain,confidence,assertion_id,
+                       evidence_json,attributes_json
                 FROM world_knowledge_assertions
                 WHERE entity_id=? AND valid_to IS NULL
                 ORDER BY field
@@ -531,7 +532,17 @@ class WorldKnowledgeStore:
             ).fetchall()
 
         result: dict[str, Any] = {}
-        for field, value_json, valid_from, known_at, domain, confidence, assertion_id in rows:
+        for (
+            field,
+            value_json,
+            valid_from,
+            known_at,
+            domain,
+            confidence,
+            assertion_id,
+            evidence_json,
+            attributes_json,
+        ) in rows:
             result[str(field)] = {
                 "value": json.loads(value_json),
                 "valid_from": valid_from,
@@ -539,6 +550,8 @@ class WorldKnowledgeStore:
                 "domain": domain,
                 "confidence": confidence,
                 "assertion_id": assertion_id,
+                "evidence": json.loads(evidence_json) if evidence_json else [],
+                "attributes": json.loads(attributes_json) if attributes_json else {},
             }
         return result
 
@@ -547,7 +560,8 @@ class WorldKnowledgeStore:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT field,value_json,valid_from,valid_to,known_at,domain,confidence,assertion_id
+                SELECT field,value_json,valid_from,valid_to,known_at,domain,confidence,assertion_id,
+                       evidence_json,attributes_json
                 FROM world_knowledge_assertions
                 WHERE entity_id=?
                   AND valid_from <= ?
@@ -567,8 +581,21 @@ class WorldKnowledgeStore:
                 "domain": domain,
                 "confidence": confidence,
                 "assertion_id": assertion_id,
+                "evidence": json.loads(evidence_json) if evidence_json else [],
+                "attributes": json.loads(attributes_json) if attributes_json else {},
             }
-            for field, value_json, valid_from, valid_to, known_at, domain, confidence, assertion_id in rows
+            for (
+                field,
+                value_json,
+                valid_from,
+                valid_to,
+                known_at,
+                domain,
+                confidence,
+                assertion_id,
+                evidence_json,
+                attributes_json,
+            ) in rows
         }
 
     def status(self) -> dict[str, int]:

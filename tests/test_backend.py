@@ -19,6 +19,7 @@ from preact.simulation.service import SimulationService
 from preact.simulation.storage import SimulationRepository
 from preact.data_ingestion.orchestrator import IngestionArtifacts
 from preact.data_ingestion.sources import GDELTSource, IngestionResult
+from preact.data_hub.news_store import SharedNewsStore
 from preact.history.world_knowledge_store import WorldKnowledgeStore
 from preact.intelligence.knowledge_update import AutonomousKnowledgeUpdater
 from preact.intelligence.world_events import WorldEventObservation
@@ -312,3 +313,83 @@ def test_world_country_events_endpoint_is_point_in_time(tmp_path) -> None:
     )
     assert later.status_code == 200
     assert later.json()["events"][0]["num_articles"] == 7
+
+
+def test_world_country_profile_endpoint_uses_local_evidence(tmp_path) -> None:
+    orchestrator = DummyOrchestrator()
+    repository = SimulationRepository(
+        tmp_path / "sim-profile.duckdb",
+        export_dir=tmp_path / "exports-profile",
+    )
+    service = SimulationService(repository=repository)
+    world = WorldKnowledgeStore(tmp_path / "world-profile.duckdb")
+    updater = AutonomousKnowledgeUpdater(world)
+
+    when = datetime.fromisoformat("2026-09-27T08:00:00+00:00")
+    evidence = SourceEvidence(
+        source="official",
+        source_ref="https://official.example/government-form",
+        published_at=when,
+        retrieved_at=when,
+        independent_group="official_institution",
+        authoritative=True,
+    )
+    updater.process(
+        KnowledgeUpdateCandidate(
+            entity_id="country:ITA",
+            field="government_form",
+            value="Test parliamentary republic",
+            valid_from=when,
+            detected_at=when,
+            domain=KnowledgeDomain.POLITICS,
+            kind=KnowledgeUpdateKind.FACT,
+            confidence=0.98,
+            evidence=(evidence,),
+        )
+    )
+
+    news = SharedNewsStore(tmp_path / "shared-news-profile.duckdb")
+    news.upsert_articles(
+        provider="google_news_rss",
+        articles=[
+            {
+                "title": "Italy political update - Example",
+                "url": "https://news.google.com/rss/articles/profile",
+                "seendate": "2026-09-27T08:10:00+00:00",
+                "publisher": "Example",
+                "domain": "example.com",
+                "language": "en",
+            }
+        ],
+        retrieved_at=datetime.fromisoformat("2026-09-27T08:15:00+00:00"),
+        snapshot_checksum="profile-news",
+        feed_id="world-politics-en",
+    )
+
+    app = create_app(
+        orchestrator=orchestrator,
+        simulation_service=service,
+        world_knowledge_store=world,
+        shared_news_store=news,
+    )
+    client = TestClient(app)
+
+    response = client.get(
+        "/world/countries/ita/profile",
+        params={
+            "as_of": "2026-09-27T09:00:00+00:00",
+            "known_cutoff": "2026-09-27T09:00:00+00:00",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["identity"]["name"] == "Italy"
+    government_form = next(
+        item
+        for item in payload["political_system"]["fields"]
+        if item["key"] == "government_form"
+    )
+    assert government_form["value"] == "Test parliamentary republic"
+    assert government_form["evidence"][0]["authoritative"] is True
+    assert payload["recent_news"]["articles"][0]["title"].startswith("Italy")
+    assert payload["semantic_contract"]["unknown_fields_remain_unknown"] is True

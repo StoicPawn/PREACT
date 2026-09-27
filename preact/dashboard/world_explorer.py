@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
@@ -22,6 +23,10 @@ from preact.analytics.relationship_signals import (
     build_relationship_layer,
 )
 from preact.data_hub.gateway import SharedProviderGateway
+from preact.data_hub.news_store import SharedNewsStore
+from preact.history.warehouse import HistoricalWarehouse
+from preact.history.world_knowledge_store import WorldKnowledgeStore
+from preact.intelligence.country_intelligence import assemble_country_intelligence_profile
 from preact.intelligence.country_profile import IndicatorSnapshot, fetch_current_country_profile
 from preact.intelligence.gdelt_relationships import (
     GDELTRelationshipBatch,
@@ -245,6 +250,74 @@ def _render_mobile_css() -> None:
     )
 
 
+def _load_local_country_intelligence(
+    iso3: str,
+    *,
+    as_of: datetime | pd.Timestamp,
+) -> dict[str, object] | None:
+    """Assemble the country dossier only from local persisted PREACT stores."""
+
+    world_path = Path(
+        os.getenv(
+            "PREACT_WORLD_KNOWLEDGE_DB",
+            "data/history/world_knowledge.duckdb",
+        )
+    )
+    if not world_path.exists():
+        return None
+
+    moment = (
+        as_of.to_pydatetime()
+        if isinstance(as_of, pd.Timestamp)
+        else as_of
+    )
+    world = WorldKnowledgeStore(world_path)
+
+    history_path = Path(
+        os.getenv("PREACT_HISTORY_DB", "data/history/preact_history.duckdb")
+    )
+    history = HistoricalWarehouse(history_path) if history_path.exists() else None
+
+    explicit_news = os.getenv("SHARED_NEWS_DB", "").strip()
+    news_path = (
+        Path(explicit_news)
+        if explicit_news
+        else Path(os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"))
+        / "shared_news.duckdb"
+    )
+    news = SharedNewsStore(news_path) if news_path.exists() else None
+
+    return assemble_country_intelligence_profile(
+        iso3,
+        world=world,
+        as_of=moment,
+        known_cutoff=moment,
+        warehouse=history,
+        news=news,
+        event_limit=100,
+        news_limit=30,
+    )
+
+
+def _intelligence_section_frame(section: Mapping[str, object]) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for field in section.get("fields", []):
+        if not isinstance(field, Mapping):
+            continue
+        value = field.get("value")
+        rows.append(
+            {
+                "Item": field.get("label"),
+                "Status": field.get("status"),
+                "Value": "—" if value is None else str(value),
+                "Confidence": field.get("confidence"),
+                "Evidence": len(field.get("evidence") or []),
+                "Known at": field.get("known_at"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def render_world_explorer(sidebar) -> None:
     """Render the responsive entry point for country intelligence."""
 
@@ -295,7 +368,7 @@ def render_world_explorer(sidebar) -> None:
                     os.getenv("SHARED_DATA_HUB_ROOT", "data/shared_hub"),
                     lookback_days=int(lookback_days),
                     min_events=1,
-                    acquire_country_map_if_missing=True,
+                    acquire_country_map_if_missing=False,
                 )
                 relationship_batches["latest"] = batch
                 st.session_state["world_relationship_edges"] = batch.edges
@@ -383,9 +456,118 @@ def render_world_explorer(sidebar) -> None:
                 st.error(f"Country indicators unavailable: {exc}")
     profile: Mapping[str, IndicatorSnapshot] = profiles.get(selected_iso3, {})
 
-    economic, social, relations, sources = st.tabs(
-        ["Economy", "Society", "Relationships", "Sources"]
+    local_intelligence: dict[str, object] | None = None
+    try:
+        local_intelligence = _load_local_country_intelligence(
+            selected_iso3,
+            as_of=as_of,
+        )
+    except Exception as exc:
+        st.warning(f"Local Country Intelligence profile unavailable: {exc}")
+
+    politics, history_tab, economic, social, relations, news_events, sources = st.tabs(
+        [
+            "Politics",
+            "History",
+            "Economy",
+            "Society",
+            "Relationships",
+            "News & events",
+            "Sources",
+        ]
     )
+
+    with politics:
+        if local_intelligence is None:
+            st.info(
+                "World Knowledge has not been populated locally yet. Political facts "
+                "remain unknown rather than being inferred."
+            )
+        else:
+            government = local_intelligence["current_government"]
+            political_system = local_intelligence["political_system"]
+            governance = local_intelligence["governance_dimensions"]
+
+            st.markdown("#### Current government")
+            st.caption(
+                f"Information coverage: {government['known_fields']}/"
+                f"{government['total_fields']} fields. Coverage is not a political rating."
+            )
+            st.dataframe(
+                _intelligence_section_frame(government),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            st.markdown("#### How the political system works")
+            st.caption(
+                f"Information coverage: {political_system['known_fields']}/"
+                f"{political_system['total_fields']} fields."
+            )
+            st.dataframe(
+                _intelligence_section_frame(political_system),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            st.markdown("#### Institutional dimensions")
+            st.caption(
+                "These dimensions are shown only when dated sourced evidence has been "
+                "loaded; no composite democracy score is inferred here."
+            )
+            st.dataframe(
+                _intelligence_section_frame(governance),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+    with history_tab:
+        if local_intelligence is None:
+            st.info("Historical narrative fields are not populated locally yet.")
+        else:
+            history_section = local_intelligence["history"]
+            st.caption(
+                "History is point-in-time and evidence-first. The twentieth-century "
+                "section is a dedicated field rather than being compressed into a generic summary."
+            )
+            st.dataframe(
+                _intelligence_section_frame(history_section),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            recent = local_intelligence["recent_events"]["events"]
+            st.markdown("#### Recent structured events")
+            if recent:
+                event_rows = pd.DataFrame(recent)
+                available = [
+                    name
+                    for name in (
+                        "event_time",
+                        "actor1_name",
+                        "actor2_name",
+                        "event_code",
+                        "goldstein",
+                        "tone",
+                        "num_sources",
+                        "num_articles",
+                        "action_location",
+                        "source_url",
+                    )
+                    if name in event_rows.columns
+                ]
+                st.dataframe(
+                    event_rows[available],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                st.caption(
+                    "These rows are provider-derived observations, not automatically "
+                    "promoted historical facts."
+                )
+            else:
+                st.caption("No local structured events are available for this country yet.")
+
     with economic:
         cols = st.columns(2)
         population = profile.get("population")
@@ -427,6 +609,54 @@ def render_world_explorer(sidebar) -> None:
         _metric("Urban population", urban.display_value if urban else None, "%")
         if not profile:
             st.info("Load current indicators to populate the social brief.")
+
+    with news_events:
+        if local_intelligence is None:
+            st.info("The local Shared News archive is not available to this profile yet.")
+        else:
+            news_payload = local_intelligence["recent_news"]
+            st.caption(
+                "Headlines below come from the local Shared News archive. Country matching "
+                "is currently textual and is explicitly not treated as entity resolution."
+            )
+            news_rows = news_payload.get("articles", [])
+            if news_rows:
+                frame = pd.DataFrame(news_rows)
+                columns = [
+                    name
+                    for name in (
+                        "published_at",
+                        "title",
+                        "publisher",
+                        "provider",
+                        "language",
+                        "url",
+                        "retrieved_at",
+                    )
+                    if name in frame.columns
+                ]
+                st.dataframe(
+                    frame[columns],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config=(
+                        {
+                            "url": st.column_config.LinkColumn(
+                                "url",
+                                display_text="open",
+                            )
+                        }
+                        if "url" in columns
+                        else None
+                    ),
+                )
+            else:
+                st.caption("No locally archived headlines match this country yet.")
+
+        if local_intelligence is not None:
+            recent = local_intelligence["recent_events"]["events"]
+            st.markdown("#### Event stream")
+            st.caption(f"{len(recent)} point-in-time event observations loaded.")
 
     with relations:
         st.markdown("#### Relationship evidence")
@@ -606,6 +836,42 @@ def render_world_explorer(sidebar) -> None:
             "Relationship runtime input is the world_relationship_edges session DataFrame "
             "built from immutable GDELT realtime snapshots in the shared data hub."
         )
+
+        if local_intelligence is not None:
+            st.markdown("#### World Knowledge assertion provenance")
+            assertion_sources: list[dict[str, object]] = []
+            for section_name in (
+                "current_government",
+                "political_system",
+                "governance_dimensions",
+                "society",
+                "history",
+            ):
+                section = local_intelligence.get(section_name, {})
+                for field in section.get("fields", []):
+                    if field.get("status") != "known":
+                        continue
+                    for evidence_item in field.get("evidence", []):
+                        assertion_sources.append(
+                            {
+                                "section": section_name,
+                                "field": field.get("label"),
+                                "source": evidence_item.get("source"),
+                                "source_ref": evidence_item.get("source_ref"),
+                                "published_at": evidence_item.get("published_at"),
+                                "retrieved_at": evidence_item.get("retrieved_at"),
+                                "authoritative": evidence_item.get("authoritative"),
+                                "confidence": field.get("confidence"),
+                            }
+                        )
+            if assertion_sources:
+                st.dataframe(
+                    pd.DataFrame(assertion_sources),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                st.caption("No promoted World Knowledge assertions are available yet.")
 
     st.divider()
     st.markdown("#### Countries")
