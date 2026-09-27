@@ -12,6 +12,7 @@ from preact.history.document_store import HistoricalDocumentStore
 from preact.history.snapshot_store import SourceSnapshotStore
 from preact.history.warehouse import HistoricalWarehouse
 from preact.projections.shared_snapshots import SharedSnapshotProjector
+from preact.intelligence.world_cycle import run_world_intelligence_cycle
 
 
 if __name__ == "__main__":
@@ -33,4 +34,22 @@ if __name__ == "__main__":
         documents=HistoricalDocumentStore(document_db),
         fips_to_iso3=load_fips_to_iso3(country_code_map),
     )
-    print(json.dumps(projector.project_pending_shared_news(), indent=2))
+    projection = projector.project_pending_shared_news()
+    world = run_world_intelligence_cycle(
+        shared_hub_root=hub_root,
+        world_knowledge_db=os.getenv(
+            "PREACT_WORLD_KNOWLEDGE_DB",
+            "data/history/world_knowledge.duckdb",
+        ),
+        lookback_days=max(1, int(os.getenv("PREACT_WORLD_LOOKBACK_DAYS", "2"))),
+    )
+    print(
+        json.dumps(
+            {
+                "shared_evidence_projection": projection,
+                "world_intelligence": world.as_dict(),
+            },
+            indent=2,
+            default=str,
+        )
+    )
