@@ -1,0 +1,15 @@
+[Unit]
+Description=ACEPC Shared News acquisition and local archive refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/preact
+Environment=PYTHONPATH=/opt/preact
+Environment=SHARED_DATA_HUB_ROOT=/var/lib/preact/shared-data-hub
+ExecStart=/opt/preact/.venv/bin/python scripts/refresh_shared_news.py
+TimeoutStartSec=10m
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
