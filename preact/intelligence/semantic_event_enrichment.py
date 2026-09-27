@@ -165,7 +165,12 @@ def classify_with_ollama(
             "prompt": _prompt(_event_payload(row, impact)),
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0.0, "num_predict": 350},
+            "think": False,
+            "options": {
+                "temperature": 0.0,
+                "num_ctx": 2048,
+                "num_predict": 160,
+            },
         }
     ).encode("utf-8")
     request = Request(

@@ -78,7 +78,7 @@ def run_semantic_enrichment_cycle(
                 row,
                 impact,
                 model=model,
-                timeout_seconds=75.0,
+                timeout_seconds=120.0,
             )
             if store.record_semantic_enrichment(result, known_at=cutoff):
                 enriched += 1

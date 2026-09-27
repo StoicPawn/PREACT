@@ -18,7 +18,7 @@ if __name__ == "__main__":
         ),
         max_events=max(
             1,
-            int(os.getenv("PREACT_SEMANTIC_MAX_EVENTS", "40")),
+            int(os.getenv("PREACT_SEMANTIC_MAX_EVENTS", "3")),
         ),
         lookback_days=max(
             1,
