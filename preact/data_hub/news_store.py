@@ -149,10 +149,30 @@ class SharedNewsStore:
                     snapshot_checksum VARCHAR,
                     feed_id VARCHAR,
                     raw_url VARCHAR,
+                    title VARCHAR,
+                    published_at TIMESTAMPTZ,
+                    publisher VARCHAR,
+                    domain VARCHAR,
+                    language VARCHAR,
+                    snippet VARCHAR,
+                    image_url VARCHAR,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
                 )
                 """
             )
+            for column, sql_type in (
+                ("title", "VARCHAR"),
+                ("published_at", "TIMESTAMPTZ"),
+                ("publisher", "VARCHAR"),
+                ("domain", "VARCHAR"),
+                ("language", "VARCHAR"),
+                ("snippet", "VARCHAR"),
+                ("image_url", "VARCHAR"),
+            ):
+                conn.execute(
+                    f"ALTER TABLE shared_news_observations "
+                    f"ADD COLUMN IF NOT EXISTS {column} {sql_type}"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_shared_news_time "
                 "ON shared_news_articles(published_at, last_seen_at)"
@@ -299,8 +319,9 @@ class SharedNewsStore:
                     """
                     INSERT INTO shared_news_observations(
                         observation_id,article_id,provider,source_ref,retrieved_at,
-                        snapshot_checksum,feed_id,raw_url
-                    ) VALUES (?,?,?,?,?,?,?,?)
+                        snapshot_checksum,feed_id,raw_url,title,published_at,
+                        publisher,domain,language,snippet,image_url
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     [
                         observation_id,
@@ -311,6 +332,13 @@ class SharedNewsStore:
                         snapshot_checksum,
                         feed_id,
                         raw_url,
+                        title,
+                        published,
+                        publisher,
+                        domain,
+                        language,
+                        snippet,
+                        image_url,
                     ],
                 )
                 inserted_observations += 1
@@ -341,7 +369,7 @@ class SharedNewsStore:
             clauses.append("o.provider = ?")
             params.append(str(provider))
         if language:
-            clauses.append("lower(coalesce(a.language,'')) = ?")
+            clauses.append("lower(coalesce(o.language,'')) = ?")
             params.append(str(language).lower())
         if feed_id:
             clauses.append("o.feed_id = ?")
@@ -349,8 +377,8 @@ class SharedNewsStore:
         if query:
             needle = f"%{str(query).strip().lower()}%"
             clauses.append(
-                "(lower(a.title) LIKE ? OR lower(coalesce(a.snippet,'')) LIKE ? "
-                "OR lower(coalesce(a.publisher,'')) LIKE ?)"
+                "(lower(coalesce(o.title,'')) LIKE ? OR lower(coalesce(o.snippet,'')) LIKE ? "
+                "OR lower(coalesce(o.publisher,'')) LIKE ?)"
             )
             params.extend([needle, needle, needle])
 
@@ -362,7 +390,17 @@ class SharedNewsStore:
                 f"""
                 WITH filtered AS (
                     SELECT
-                        a.*,
+                        a.article_id,
+                        a.first_seen_at,
+                        a.metadata_only,
+                        o.title,
+                        o.published_at,
+                        o.raw_url AS url,
+                        o.publisher,
+                        o.domain,
+                        o.language,
+                        o.snippet,
+                        o.image_url,
                         o.provider,
                         o.feed_id,
                         o.retrieved_at,
@@ -371,7 +409,10 @@ class SharedNewsStore:
                             PARTITION BY a.article_id
                             ORDER BY o.retrieved_at DESC, o.provider
                         ) AS rn,
-                        COUNT(*) OVER (PARTITION BY a.article_id) AS observation_count
+                        COUNT(*) OVER (PARTITION BY a.article_id) AS observation_count,
+                        MAX(o.retrieved_at) OVER (
+                            PARTITION BY a.article_id
+                        ) AS last_seen_at
                     FROM shared_news_articles a
                     JOIN shared_news_observations o USING(article_id)
                     {where}
