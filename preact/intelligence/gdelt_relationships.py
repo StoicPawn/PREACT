@@ -60,6 +60,7 @@ def _event_frame(
     rows: Iterable[dict[str, str]],
     *,
     retrieved_at: datetime,
+    snapshot_checksum: str,
     as_of: datetime,
     country_map: CAMEOCountryMap | None,
 ) -> tuple[pd.DataFrame, int]:
@@ -102,11 +103,22 @@ def _event_frame(
                 "actor1_country": actor1,
                 "actor2_country": actor2,
                 "country": actor1,
+                "actor1_name": str(row.get("Actor1Name") or "").strip() or None,
+                "actor2_name": str(row.get("Actor2Name") or "").strip() or None,
+                "event_code": str(row.get("EventCode") or "").strip() or None,
+                "event_base_code": str(row.get("EventBaseCode") or "").strip() or None,
+                "event_root_code": str(row.get("EventRootCode") or "").strip() or None,
+                "quad_class": int(_numeric(row.get("QuadClass"), 0.0)),
                 "tone": _numeric(row.get("AvgTone")),
                 "goldstein": _numeric(row.get("GoldsteinScale")),
+                "num_mentions": max(0.0, _numeric(row.get("NumMentions"), 0.0)),
+                "num_sources": max(0.0, _numeric(row.get("NumSources"), 0.0)),
                 "num_articles": max(0.0, _numeric(row.get("NumArticles"), 1.0)),
+                "action_location": str(row.get("ActionGeo_FullName") or "").strip() or None,
+                "action_country_code": str(row.get("ActionGeo_CountryCode") or "").strip() or None,
                 "source_url": str(row.get("SOURCEURL") or "").strip(),
                 "retrieved_at": retrieved_at,
+                "snapshot_checksum": snapshot_checksum,
             }
         )
 
@@ -182,6 +194,7 @@ def load_recent_relationship_edges(
         frame, raw_count = _event_frame(
             rows,
             retrieved_at=snapshot.retrieved_at,
+            snapshot_checksum=snapshot.checksum_sha256,
             as_of=cutoff,
             country_map=country_map,
         )
