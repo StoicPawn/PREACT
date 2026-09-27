@@ -19,6 +19,7 @@ SOURCE_PLAN:tuple[PlannedSource,...]=(
     PlannedSource("geonames",0,1,"entity/code normalization",required_for=("atlas","replay","scenario")),
     PlannedSource("gdelt",0,2,"live global events/news",("geonames",),("atlas","replay")),
     PlannedSource("google_news_rss",0,3,"current news discovery",(),("atlas",)),
+    PlannedSource("wikidata",0,4,"structured current country/political reference",(),("atlas",)),
     PlannedSource("cow",1,1,"historical state system, alliances, disputes, capabilities",("geonames",),("atlas","replay","scenario")),
     PlannedSource("cshapes",1,2,"historical borders/capitals",("cow",),("atlas",)),
     PlannedSource("vdem",1,3,"long-run political institutions",("geonames",),("atlas","replay","scenario")),
