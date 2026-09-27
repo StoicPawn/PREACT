@@ -51,6 +51,8 @@ def shared_news_latest(
     provider: str | None = Query(None, max_length=64),
     language: str | None = Query(None, max_length=16),
     feed_id: str | None = Query(None, max_length=128),
+    entity_id: str | None = Query(None, max_length=128),
+    min_entity_confidence: float = Query(0.80, ge=0.0, le=1.0),
     known_cutoff: datetime | None = Query(
         None,
         description="Return only observations acquired no later than this instant",
@@ -65,6 +67,8 @@ def shared_news_latest(
         provider=provider,
         language=language,
         feed_id=feed_id,
+        entity_id=entity_id,
+        min_entity_confidence=min_entity_confidence,
         known_cutoff=known_cutoff,
     )
     return {
