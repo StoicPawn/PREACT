@@ -296,6 +296,29 @@ class WorldKnowledgeStore:
             for field, value_json, valid_from, valid_to, known_at, domain, confidence, assertion_id in rows
         }
 
+    def status(self) -> dict[str, int]:
+        with self.connect() as conn:
+            candidates = int(conn.execute("SELECT COUNT(*) FROM world_knowledge_candidates").fetchone()[0])
+            decisions = int(conn.execute("SELECT COUNT(*) FROM world_knowledge_decisions").fetchone()[0])
+            assertions = int(conn.execute("SELECT COUNT(*) FROM world_knowledge_assertions").fetchone()[0])
+            current_assertions = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM world_knowledge_assertions WHERE valid_to IS NULL"
+                ).fetchone()[0]
+            )
+            narrative_jobs = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM world_narrative_jobs WHERE status='queued'"
+                ).fetchone()[0]
+            )
+        return {
+            "candidates": candidates,
+            "decisions": decisions,
+            "assertions": assertions,
+            "current_assertions": current_assertions,
+            "queued_narrative_jobs": narrative_jobs,
+        }
+
     def queued_narrative_jobs(self, entity_id: Optional[str] = None) -> list[dict[str, Any]]:
         clauses = ["status='queued'"]
         params: list[Any] = []
