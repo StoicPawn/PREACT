@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh PREACT current political reference every two hours
+
+[Timer]
+OnCalendar=*-*-* 00/2:07:00
+Persistent=true
+RandomizedDelaySec=120
+Unit=preact-political-reference.service
+
+[Install]
+WantedBy=timers.target
