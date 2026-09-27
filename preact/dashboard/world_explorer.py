@@ -487,6 +487,14 @@ def render_world_explorer(sidebar) -> None:
             government = local_intelligence["current_government"]
             political_system = local_intelligence["political_system"]
             governance = local_intelligence["governance_dimensions"]
+            descriptions = local_intelligence.get("descriptions", {})
+
+            current_description = descriptions.get("current_government")
+            if current_description:
+                st.markdown(current_description["text"])
+                st.caption(
+                    "FACT-DERIVED · generated only from promoted World Knowledge assertions"
+                )
 
             st.markdown("#### Current government")
             st.caption(
@@ -500,6 +508,12 @@ def render_world_explorer(sidebar) -> None:
             )
 
             st.markdown("#### How the political system works")
+            system_description = descriptions.get("political_system")
+            if system_description:
+                st.markdown(system_description["text"])
+                st.caption(
+                    "FACT-DERIVED · missing institutional mechanisms remain explicitly unknown"
+                )
             st.caption(
                 f"Information coverage: {political_system['known_fields']}/"
                 f"{political_system['total_fields']} fields."

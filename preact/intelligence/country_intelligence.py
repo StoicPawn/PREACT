@@ -284,6 +284,123 @@ def _recent_news(
     }
 
 
+def _field_value(section: Mapping[str, Any], key: str) -> tuple[Any, str | None]:
+    for item in section.get("fields", []):
+        if item.get("key") == key and item.get("status") == "known":
+            return item.get("value"), item.get("assertion_id")
+    return None, None
+
+
+def _human_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        if not cleaned:
+            return None
+        if len(cleaned) == 1:
+            return cleaned[0]
+        return ", ".join(cleaned[:-1]) + " and " + cleaned[-1]
+    return str(value).strip() or None
+
+
+def _derived_descriptions(
+    *,
+    identity: Mapping[str, Any],
+    political: Mapping[str, Any],
+    government: Mapping[str, Any],
+    society: Mapping[str, Any],
+    state: Mapping[str, Mapping[str, Any]],
+    generated_at: datetime,
+) -> dict[str, Any]:
+    """Build conservative prose only from currently promoted factual assertions."""
+
+    descriptions: dict[str, Any] = {}
+    government_parts: list[str] = []
+    government_support: list[str] = []
+
+    head_state, head_state_id = _field_value(government, "head_of_state")
+    head_gov, head_gov_id = _field_value(government, "head_of_government")
+    coalition, coalition_id = _field_value(government, "governing_coalition")
+
+    if _human_value(head_state):
+        government_parts.append(f"The current head of state is {_human_value(head_state)}.")
+    if _human_value(head_gov):
+        government_parts.append(f"The current head of government is {_human_value(head_gov)}.")
+    if _human_value(coalition):
+        government_parts.append(f"The recorded governing coalition is {_human_value(coalition)}.")
+    for assertion_id in (head_state_id, head_gov_id, coalition_id):
+        if assertion_id:
+            government_support.append(str(assertion_id))
+
+    if government_parts:
+        descriptions["current_government"] = {
+            "text": " ".join(government_parts),
+            "semantic_class": "FACT_DERIVED",
+            "supporting_assertion_ids": government_support,
+            "generated_at": generated_at,
+        }
+
+    political_parts: list[str] = []
+    political_support: list[str] = []
+    form, form_id = _field_value(political, "government_form")
+    state_form, state_form_id = _field_value(political, "state_form")
+    legislature, legislature_id = _field_value(political, "legislature")
+    electoral, electoral_id = _field_value(political, "electoral_system")
+
+    if _human_value(state_form):
+        political_parts.append(f"The recorded form of state is {_human_value(state_form)}.")
+    if _human_value(form):
+        political_parts.append(f"The recorded form of government is {_human_value(form)}.")
+    if _human_value(legislature):
+        political_parts.append(f"The legislature is {_human_value(legislature)}.")
+    if _human_value(electoral):
+        political_parts.append(f"The recorded electoral system is {_human_value(electoral)}.")
+    for assertion_id in (state_form_id, form_id, legislature_id, electoral_id):
+        if assertion_id:
+            political_support.append(str(assertion_id))
+
+    if political_parts:
+        descriptions["political_system"] = {
+            "text": " ".join(political_parts),
+            "semantic_class": "FACT_DERIVED",
+            "supporting_assertion_ids": political_support,
+            "generated_at": generated_at,
+        }
+
+    identity_parts: list[str] = []
+    identity_support: list[str] = []
+    capital = identity.get("capital")
+    languages, languages_id = _field_value(society, "official_languages")
+    website_assertion = state.get("official_website")
+
+    if _human_value(capital):
+        identity_parts.append(f"The capital is {_human_value(capital)}.")
+        capital_assertion = state.get("capital")
+        if capital_assertion and capital_assertion.get("assertion_id"):
+            identity_support.append(str(capital_assertion["assertion_id"]))
+    if _human_value(languages):
+        identity_parts.append(f"Official languages recorded by PREACT are {_human_value(languages)}.")
+    if languages_id:
+        identity_support.append(str(languages_id))
+    if website_assertion and website_assertion.get("value"):
+        identity_parts.append(
+            f"The recorded official website is {_human_value(website_assertion.get('value'))}."
+        )
+        if website_assertion.get("assertion_id"):
+            identity_support.append(str(website_assertion["assertion_id"]))
+
+    if identity_parts:
+        descriptions["country_today"] = {
+            "text": " ".join(identity_parts),
+            "semantic_class": "FACT_DERIVED",
+            "supporting_assertion_ids": identity_support,
+            "generated_at": generated_at,
+        }
+
+    return descriptions
+
+
 def assemble_country_intelligence_profile(
     iso3: str,
     *,
@@ -323,6 +440,15 @@ def assemble_country_intelligence_profile(
     )
     identity["capital_status"] = "known" if capital_assertion is not None else "unknown"
 
+    descriptions = _derived_descriptions(
+        identity=identity,
+        political=political,
+        government=government,
+        society=society,
+        state=state,
+        generated_at=cutoff,
+    )
+
     data_gaps = {
         "political_system": [
             item["key"] for item in political["fields"] if item["status"] == "unknown"
@@ -346,6 +472,7 @@ def assemble_country_intelligence_profile(
         "as_of": world_time,
         "known_cutoff": cutoff,
         "identity": identity,
+        "descriptions": descriptions,
         "political_system": political,
         "current_government": government,
         "governance_dimensions": governance,
