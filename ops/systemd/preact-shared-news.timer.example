@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh ACEPC Shared News every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=preact-shared-news.service
+
+[Install]
+WantedBy=timers.target
