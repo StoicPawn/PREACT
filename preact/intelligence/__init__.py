@@ -1,6 +1,5 @@
 """Country, polity and autonomous world intelligence models."""
 
-from .knowledge_update import AutonomousKnowledgeUpdater, KnowledgeUpdateResult
 from .risk import RiskDimension, RiskEstimate, RiskVector
 from .world_knowledge import (
     KnowledgeDomain,
@@ -15,11 +14,9 @@ from .world_knowledge import (
 )
 
 __all__ = [
-    "AutonomousKnowledgeUpdater",
     "KnowledgeDomain",
     "KnowledgeUpdateCandidate",
     "KnowledgeUpdateKind",
-    "KnowledgeUpdateResult",
     "PromotionAction",
     "PromotionDecision",
     "PromotionPolicy",
