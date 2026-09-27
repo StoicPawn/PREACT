@@ -127,3 +127,104 @@ def test_low_confidence_candidate_is_stored_but_not_promoted(tmp_path):
     assert result.decision.action is PromotionAction.HOLD_FOR_MORE_EVIDENCE
     assert result.assertion_id is None
     assert store.current_state("country:ITA") == {}
+
+
+def test_independent_reports_across_cycles_corroborate_same_claim(tmp_path):
+    store = WorldKnowledgeStore(tmp_path / "corroboration.duckdb")
+    updater = AutonomousKnowledgeUpdater(store)
+
+    valid_from = datetime(2026, 9, 27, 8, 0, tzinfo=timezone.utc)
+    first_seen = datetime(2026, 9, 27, 9, 0, tzinfo=timezone.utc)
+    second_seen = datetime(2026, 9, 27, 9, 15, tzinfo=timezone.utc)
+
+    first = KnowledgeUpdateCandidate(
+        entity_id="country:ITA",
+        field="head_of_government",
+        value="Person B",
+        valid_from=valid_from,
+        detected_at=first_seen,
+        domain=KnowledgeDomain.GOVERNANCE,
+        kind=KnowledgeUpdateKind.FACT,
+        confidence=0.9,
+        evidence=(
+            SourceEvidence(
+                source="wire_a",
+                source_ref="https://a.example/story",
+                published_at=first_seen,
+                retrieved_at=first_seen,
+                independent_group="agency_a",
+            ),
+        ),
+    )
+    second = KnowledgeUpdateCandidate(
+        entity_id="country:ITA",
+        field="head_of_government",
+        value="Person B",
+        valid_from=valid_from,
+        detected_at=second_seen,
+        domain=KnowledgeDomain.GOVERNANCE,
+        kind=KnowledgeUpdateKind.FACT,
+        confidence=0.88,
+        evidence=(
+            SourceEvidence(
+                source="paper_b",
+                source_ref="https://b.example/story",
+                published_at=second_seen,
+                retrieved_at=second_seen,
+                independent_group="publisher_b",
+            ),
+        ),
+    )
+
+    first_result = updater.process(first)
+    assert first_result.decision.action is PromotionAction.HOLD_FOR_MORE_EVIDENCE
+    assert store.current_state("country:ITA") == {}
+
+    second_result = updater.process(second)
+    assert second_result.candidate_id == first.claim_key() == second.claim_key()
+    assert second_result.decision.action is PromotionAction.AUTO_PROMOTE_FACT
+    assert second_result.decision.independent_source_groups == 2
+    assert store.current_state("country:ITA")["head_of_government"]["value"] == "Person B"
+
+    status = store.status()
+    assert status["candidates"] == 2
+    assert status["distinct_claims"] == 1
+    assert status["evidence_observations"] == 2
+
+
+def test_repeated_reports_from_same_source_group_do_not_fake_corroboration(tmp_path):
+    store = WorldKnowledgeStore(tmp_path / "same-source.duckdb")
+    updater = AutonomousKnowledgeUpdater(store)
+
+    valid_from = datetime(2026, 9, 27, 8, 0, tzinfo=timezone.utc)
+    observations = []
+    for minute, source in ((0, "paper_a"), (15, "paper_a_update")):
+        seen = datetime(2026, 9, 27, 9, minute, tzinfo=timezone.utc)
+        observations.append(
+            KnowledgeUpdateCandidate(
+                entity_id="country:ITA",
+                field="head_of_government",
+                value="Person B",
+                valid_from=valid_from,
+                detected_at=seen,
+                domain=KnowledgeDomain.GOVERNANCE,
+                kind=KnowledgeUpdateKind.FACT,
+                confidence=0.95,
+                evidence=(
+                    SourceEvidence(
+                        source=source,
+                        source_ref=f"https://same.example/{minute}",
+                        published_at=seen,
+                        retrieved_at=seen,
+                        independent_group="same_publisher_group",
+                    ),
+                ),
+            )
+        )
+
+    updater.process(observations[0])
+    result = updater.process(observations[1])
+
+    assert result.decision.action is PromotionAction.HOLD_FOR_MORE_EVIDENCE
+    assert result.decision.independent_source_groups == 1
+    assert store.current_state("country:ITA") == {}
