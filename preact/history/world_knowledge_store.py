@@ -342,6 +342,89 @@ class WorldKnowledgeStore:
                 ],
             )
 
+    def seed_reference_fact(
+        self,
+        candidate: KnowledgeUpdateCandidate,
+        *,
+        allowed_sources: Sequence[str] = ("wikidata",),
+    ) -> tuple[str, bool]:
+        """Seed an unknown field from a reviewed structured reference.
+
+        This is intentionally bootstrap-only: it never overwrites an existing
+        current assertion. Later changes must pass the normal corroboration path.
+        """
+        if candidate.kind is not KnowledgeUpdateKind.FACT:
+            raise ValueError("Reference seeds must be factual candidates")
+        if not candidate.evidence:
+            raise ValueError("Reference seeds require evidence")
+        allowed = {str(item).strip() for item in allowed_sources}
+        observed_sources = {item.source for item in candidate.evidence}
+        if not observed_sources.issubset(allowed):
+            raise ValueError("Reference seed contains a non-approved source")
+
+        with self.connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT assertion_id
+                FROM world_knowledge_assertions
+                WHERE entity_id=? AND field=? AND valid_to IS NULL
+                ORDER BY valid_from DESC LIMIT 1
+                """,
+                [candidate.entity_id, candidate.field],
+            ).fetchone()
+            if existing:
+                return str(existing[0]), False
+
+        self.record_candidate(candidate)
+        assertion_id = "wka_seed_" + candidate.claim_key().rsplit("_", 1)[-1]
+        value_json = json.dumps(candidate.value, ensure_ascii=False, sort_keys=True, default=str)
+        evidence_json = json.dumps(self._evidence_payload(candidate), ensure_ascii=False, sort_keys=True)
+        attributes = dict(candidate.attributes)
+        attributes["promotion_mode"] = "reference_seed"
+        attributes_json = json.dumps(attributes, ensure_ascii=False, sort_keys=True, default=str)
+
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO world_knowledge_assertions(
+                    assertion_id,candidate_id,entity_id,field,value_json,
+                    valid_from,valid_to,known_at,domain,confidence,
+                    evidence_json,attributes_json
+                ) VALUES (?,?,?,?,?,?,NULL,?,?,?,?,?)
+                """,
+                [
+                    assertion_id,
+                    candidate.candidate_id,
+                    candidate.entity_id,
+                    candidate.field,
+                    value_json,
+                    candidate.valid_from,
+                    candidate.detected_at,
+                    candidate.domain.value,
+                    float(candidate.confidence),
+                    evidence_json,
+                    attributes_json,
+                ],
+            )
+            for section in affected_narrative_sections(candidate):
+                job_id = f"wnj_{candidate.candidate_id}_{section}"
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO world_narrative_jobs(
+                        job_id,candidate_id,entity_id,section,reason,status
+                    ) VALUES (?,?,?,?,?,?)
+                    """,
+                    [
+                        job_id,
+                        candidate.candidate_id,
+                        candidate.entity_id,
+                        section,
+                        f"Reference baseline seeded: {candidate.field}",
+                        "queued",
+                    ],
+                )
+        return assertion_id, True
+
     def promote_fact(
         self,
         candidate: KnowledgeUpdateCandidate,
