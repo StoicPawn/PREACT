@@ -6,11 +6,12 @@ This module adds historical time/provenance semantics without changing raw data.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Iterable, Mapping
 
 from preact.history.documents import HistoricalDocument, TextAvailability
+from preact.history.relations import HistoricalRelation
 from preact.history.schema import EvidenceClass, Provenance, TemporalRecord
 
 
@@ -40,6 +41,103 @@ def _event_id(row: Mapping[str, Any]) -> str:
     digest = sha256(repr(sorted(row.items())).encode("utf-8")).hexdigest()
     return f"gdelt:event:sha256:{digest}"
 
+
+
+def _country_entity(
+    code: object,
+    *,
+    code_to_iso3: Mapping[str, str] | None,
+) -> tuple[str | None, str | None]:
+    raw = str(code or "").strip().upper()
+    if not raw:
+        return None, None
+    iso3 = (code_to_iso3 or {}).get(raw)
+    if not iso3:
+        return None, raw
+    return f"iso3:{iso3}", raw
+
+
+def _gdelt_relation_type(row: Mapping[str, Any]) -> str:
+    quad = str(row.get("QuadClass") or "").strip()
+    return {
+        "1": "gdelt_verbal_cooperation",
+        "2": "gdelt_material_cooperation",
+        "3": "gdelt_verbal_conflict",
+        "4": "gdelt_material_conflict",
+    }.get(quad, "gdelt_interaction")
+
+
+def gdelt_event_relations(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    acquired_at: datetime,
+    snapshot_checksum: str | None = None,
+    code_to_iso3: Mapping[str, str] | None = None,
+) -> list[HistoricalRelation]:
+    """Project country-to-country GDELT events into the bitemporal relation graph.
+
+    Event rows are represented as one-day relations so they contribute to recent-event
+    dynamics without becoming permanent active relationships. Unresolved or self-loop
+    actor-country pairs are dropped fail-closed.
+    """
+
+    output: list[HistoricalRelation] = []
+    for row in rows:
+        valid_from = _parse_gdelt_datetime(row.get("SQLDATE"), date_only=True)
+        if valid_from is None:
+            continue
+        known_at = _parse_gdelt_datetime(row.get("DATEADDED")) or acquired_at
+        if known_at < valid_from:
+            known_at = valid_from
+
+        subject, actor1_code = _country_entity(
+            row.get("Actor1CountryCode"),
+            code_to_iso3=code_to_iso3,
+        )
+        object_, actor2_code = _country_entity(
+            row.get("Actor2CountryCode"),
+            code_to_iso3=code_to_iso3,
+        )
+        if subject is None or object_ is None or subject == object_:
+            continue
+
+        event_id = _event_id(row)
+        source_url = str(row.get("SOURCEURL") or "").strip()
+        output.append(
+            HistoricalRelation(
+                relation_id=f"{event_id}:interaction",
+                relation_type=_gdelt_relation_type(row),
+                subject_entity_id=subject,
+                object_entity_id=object_,
+                valid_from=valid_from,
+                valid_to=valid_from + timedelta(days=1),
+                known_at=known_at,
+                directed=True,
+                source="gdelt",
+                source_ref=source_url or event_id,
+                retrieved_at=acquired_at,
+                dataset_version="GDELT 2.0 Events",
+                attributes={
+                    "event_id": event_id,
+                    "snapshot_checksum": snapshot_checksum,
+                    "event_code": row.get("EventCode"),
+                    "event_base_code": row.get("EventBaseCode"),
+                    "event_root_code": row.get("EventRootCode"),
+                    "quad_class": row.get("QuadClass"),
+                    "goldstein_scale": row.get("GoldsteinScale"),
+                    "avg_tone": row.get("AvgTone"),
+                    "num_mentions": row.get("NumMentions"),
+                    "num_sources": row.get("NumSources"),
+                    "num_articles": row.get("NumArticles"),
+                    "actor1_name": row.get("Actor1Name"),
+                    "actor2_name": row.get("Actor2Name"),
+                    "actor1_country_code": actor1_code,
+                    "actor2_country_code": actor2_code,
+                    "source_url": source_url,
+                },
+            )
+        )
+    return output
 
 def gdelt_event_records(
     rows: Iterable[Mapping[str, Any]],
